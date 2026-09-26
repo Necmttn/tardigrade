@@ -1,0 +1,19 @@
+{
+  "name": "@clavia/tardigrade-host-v2",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.115",
+    "@clavia/tardigrade-core-v2": "workspace:*",
+    "@clavia/tardigrade-agent-v2": "workspace:*",
+    "@effect/ai-openrouter": "4.0.0-rc.115"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

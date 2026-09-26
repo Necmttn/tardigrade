@@ -28,7 +28,8 @@
     "setup": "git config core.hooksPath .githooks",
     "pack": "bun run tools/publish.ts --dry-run",
     "graph": "bun run tools/code-graph.ts",
-    "graph:check": "bun run tools/code-graph.ts --check"
+    "graph:check": "bun run tools/code-graph.ts --check",
+    "chat:v2": "bun packages/host-v2/examples/chat.ts"
   },
   "dependencies": {
     "@types/node": "^24",

@@ -175,6 +175,14 @@
         "fast-check": "^4.9.0",
       },
     },
+    "packages/agent-v2": {
+      "name": "@clavia/tardigrade-agent-v2",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-core-v2": "workspace:*",
+        "effect": "4.0.0-rc.115",
+      },
+    },
     "packages/channels": {
       "name": "@clavia/tardigrade-channels",
       "version": "0.0.1",
@@ -215,7 +223,22 @@
       "version": "0.0.1",
       "dependencies": {
         "effect": "4.0.0-rc.115",
+      },
+      "devDependencies": {
         "fast-check": "^4.9.0",
+      },
+      "peerDependencies": {
+        "fast-check": "^4.9.0",
+      },
+      "optionalPeers": [
+        "fast-check",
+      ],
+    },
+    "packages/core-v2": {
+      "name": "@clavia/tardigrade-core-v2",
+      "version": "0.0.1",
+      "dependencies": {
+        "effect": "4.0.0-rc.115",
       },
     },
     "packages/host": {
@@ -227,6 +250,16 @@
       },
       "devDependencies": {
         "fast-check": "^4.9.0",
+      },
+    },
+    "packages/host-v2": {
+      "name": "@clavia/tardigrade-host-v2",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-agent-v2": "workspace:*",
+        "@clavia/tardigrade-core-v2": "workspace:*",
+        "@effect/ai-openrouter": "4.0.0-rc.115",
+        "effect": "4.0.0-rc.115",
       },
     },
     "packages/http": {
@@ -419,6 +452,8 @@
 
     "@clavia/tardigrade-agent": ["@clavia/tardigrade-agent@workspace:packages/agent"],
 
+    "@clavia/tardigrade-agent-v2": ["@clavia/tardigrade-agent-v2@workspace:packages/agent-v2"],
+
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
 
     "@clavia/tardigrade-channels": ["@clavia/tardigrade-channels@workspace:packages/channels"],
@@ -433,9 +468,13 @@
 
     "@clavia/tardigrade-core": ["@clavia/tardigrade-core@workspace:packages/core"],
 
+    "@clavia/tardigrade-core-v2": ["@clavia/tardigrade-core-v2@workspace:packages/core-v2"],
+
     "@clavia/tardigrade-e2e": ["@clavia/tardigrade-e2e@workspace:e2e"],
 
     "@clavia/tardigrade-host": ["@clavia/tardigrade-host@workspace:packages/host"],
+
+    "@clavia/tardigrade-host-v2": ["@clavia/tardigrade-host-v2@workspace:packages/host-v2"],
 
     "@clavia/tardigrade-http": ["@clavia/tardigrade-http@workspace:packages/http"],
 
@@ -474,6 +513,8 @@
     "@cloudflare/workers-types": ["@cloudflare/workers-types@5.20260823.1", "", {}, "sha512-HdBVDR/gecQ5QwB+DZ9kB5yjNZLS85fe8bMB2K/k0xmCvaoMlAFrQQGLaCBYR00j+i9aTkQzwfrPInVZwlMPwQ=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
+
+    "@effect/ai-openrouter": ["@effect/ai-openrouter@4.0.0-rc.115", "", { "peerDependencies": { "effect": "^4.0.0-rc.115" } }, "sha512-ZUz4VEqa+CcKKRUn8Iq55moRX8VI/+8T+Hdx6UEDniixQvHHe4ius3qTXz8Ph4Csu1yK1lwkuY8eeH1tG8MUXw=="],
 
     "@effect/platform-bun": ["@effect/platform-bun@4.0.0-rc.115", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-rc.115" }, "peerDependencies": { "effect": "^4.0.0-rc.115" } }, "sha512-ilTFcs66ghInP8WHCJYa4bx/yzohYM9dRR//qjmVBBpSKu1hrCTiRWpEcc1N6zrnOEPk2kyVaKg5ykSMgiBMqQ=="],
 
