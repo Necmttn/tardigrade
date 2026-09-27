@@ -25,6 +25,9 @@ export {
   type BackgroundTaskOwner,
   type CloudflareWorkerLayerContext,
   type CloudflareWorkerOptions,
+  type CloudflareThreadStoreContext,
+  type CloudflareActorDirectoryContext,
+  type CloudflareActorDirectory,
   type CloudflareWorkerStoreFor,
   type DeploymentModelScope,
   type Env

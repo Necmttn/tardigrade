@@ -25,6 +25,7 @@ import { bunBackupRunner, type BunBackupOptions, type BunBackupStatus } from "./
 export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "layersFor" | "signal"> & {
   readonly actor: Actor<R, Methods>
   readonly storage: string
+  readonly actorInstances?: (actor: string) => Promise<ReadonlyArray<string>>
   readonly storageLayout?: HostStorageLayout
   readonly backup?: BunBackupOptions
 } & {
@@ -69,7 +70,8 @@ export const hostBackend = (host: object): HostBackend => {
 // createBunHost owns the Bun runtimes and SQLite files for an actor's instances.
 export const createBunHost = async <R, const Methods extends ActorMethods>(options: HostOptions<R, Methods>): Promise<Host<Methods>> => {
   if (!options.storage) throw new Error("storage must be a directory or :memory:")
-  if (options.backup !== undefined && (options.storageLayout !== undefined || options.threadDatabase !== undefined)) throw new Error("backup requires the default storage layout")
+  if (options.backup !== undefined && (options.storageLayout !== undefined || options.threadDatabase !== undefined || options.actorInstances !== undefined)) throw new Error("backup requires the default storage layout")
+  if (options.backup !== undefined && (options.eventStoreFor !== undefined || options.actorDirectoryFor !== undefined || options.workspaceFor !== undefined)) throw new Error("backup cannot be combined with injected storage")
   const backupRunner = options.backup === undefined ? undefined : bunBackupRunner({ actor: options.actor.name, storage: options.storage, backup: options.backup })
   const actorOf = (name: string): Actor<R, Methods> => {
     if (name !== options.actor.name) throw new Error("target actor does not match this host")
@@ -208,7 +210,15 @@ export const createBunHost = async <R, const Methods extends ActorMethods>(optio
     close: async () => { try { await pool.close() } finally { await backupRunner?.close() } },
     ...(backupRunner === undefined ? {} : { backup: { status: backupRunner.status } })
   }
-  if (options.storage !== ":memory:") await pool.restore(options.storage, options.storageLayout?.instanceFromFile ?? ((file) => {
+  if (options.actorInstances !== undefined) {
+    try {
+      for (const instance of await options.actorInstances(options.actor.name)) await pool.open(instance)
+    } catch (cause) {
+      await pool.close()
+      await backupRunner?.close()
+      throw cause
+    }
+  } else if (options.storage !== ":memory:") await pool.restore(options.storage, options.storageLayout?.instanceFromFile ?? ((file) => {
     if (!file.endsWith(".sqlite")) return undefined
     let identity: unknown
     try { identity = JSON.parse(Buffer.from(file.slice(0, -7), "base64url").toString("utf8")) } catch { return undefined }

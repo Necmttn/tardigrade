@@ -20,7 +20,7 @@ import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavi
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { ThreadAllocator, allocateThread } from "@clavia/tardigrade-core/actor/allocation"
-import { instanceThreadAllocator, registeredThreadAllocator, threadRequestOf, type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
+import { instanceThreadAllocator, registeredThreadAllocator, threadRequestOf, type ThreadAllocationPolicy, type ThreadAllocationStore } from "@clavia/tardigrade-host/allocation"
 import { sqlThreadDirectory } from "@clavia/tardigrade-host/allocation-sql"
 import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
@@ -29,7 +29,7 @@ import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord } from "@clavia
 import { alarmFiredForLog, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
 import { Alarm, alarmFromLog, nextAlarmOf } from "@clavia/tardigrade-core/alarm"
 import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
-import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
+import { type ActorMethodDeclaration, type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
   EffectInterruptions,
   Self,
@@ -55,6 +55,25 @@ type LayersFor<R> = [Exclude<R, BunPorts>] extends [never]
   ? { readonly layersFor?: (thread: string) => BunThreadEnv<R> }
   : { readonly layersFor: (thread: string) => BunThreadEnv<R> }
 
+export interface BunThreadStoreContext {
+  readonly actor: string
+  readonly instance: string
+  readonly thread: string
+  readonly keyOf: (event: Event) => string | undefined
+}
+
+export interface BunActorDirectoryContext {
+  readonly actor: string
+  readonly instance: string
+  readonly keyOf: (event: Event) => string | undefined
+  readonly requestThread: ActorMethodDeclaration
+}
+
+export interface BunActorDirectory {
+  readonly events: ThreadEventStore
+  readonly allocations: ThreadAllocationStore
+}
+
 // bunThreadDatabasePath places a thread database beside the actor directory database. The reversible encoding lets startup repair the directory from surviving files.
 export const bunThreadDatabasePath = (actorDatabase: string, thread: string): string =>
   actorDatabase === ":memory:" ? ":memory:" : join(`${actorDatabase}.threads`, `${Buffer.from(thread, "utf8").toString("base64url")}.sqlite`)
@@ -67,14 +86,16 @@ export type BunHostOptions<R> = {
   readonly signal?: AbortSignal
   readonly allocation?: ThreadAllocationPolicy
   readonly threadAllocator?: typeof ThreadAllocator.Service
+  readonly actorDirectoryFor?: (context: BunActorDirectoryContext) => BunActorDirectory | Promise<BunActorDirectory>
   // database stores the actor identity and event log. Each thread database lives at threadDatabase(thread).
   readonly database: string
   // threadDatabase selects the physical database for a thread. The default is bunThreadDatabasePath(database, thread).
   readonly threadDatabase?: (thread: string) => string
-  readonly eventStoreFor?: (context: { readonly actor: string; readonly instance: string; readonly thread: string; readonly keyOf: (event: Event) => string | undefined }) => ThreadEventStore | Promise<ThreadEventStore>
+  readonly eventStoreFor?: (context: BunThreadStoreContext) => ThreadEventStore | Promise<ThreadEventStore>
   readonly defaultChildPlacement?: ChildPlacement
   readonly telemetry?: Layer.Layer<never>
   readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
+  readonly workspaceFor?: (context: Omit<BunThreadStoreContext, "keyOf">) => typeof KeyValueStore.KeyValueStore.Service | Promise<typeof KeyValueStore.KeyValueStore.Service>
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly sandbox?: Partial<BunSandboxPolicy>
   readonly actorName?: string
@@ -273,52 +294,29 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     throw new Error(`Bun host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
   }
   const pathOf = options.threadDatabase ?? ((thread: string) => bunThreadDatabasePath(options.database, thread))
-  const { runtime: directoryRuntime, sql: directorySql } = await openActorDirectory(options, actorName, actorInstance)
-  const assignments = sqlThreadDirectory(directorySql, "actor_events", (target, existingRoot) =>
+  const localDirectory = options.actorDirectoryFor === undefined
+    ? await openActorDirectory(options, actorName, actorInstance)
+    : undefined
+  const directoryRuntime = localDirectory?.runtime ?? ManagedRuntime.make(options.telemetry ?? Layer.empty)
+  const directorySql = localDirectory?.sql!
+  const localAssignments = localDirectory === undefined ? undefined : sqlThreadDirectory(directorySql, "actor_events", (target, existingRoot) =>
     directorySql<{ parent_thread: string | null }>`SELECT parent_thread FROM thread_directory WHERE thread = ${target.thread}`.pipe(
       Effect.map((rows) => rows.length > 0 && (!existingRoot || rows[0]?.parent_thread !== null)), Effect.orDie
     ), definition.methods.requestThread)
-  const localAllocator = instanceThreadAllocator({ actor: actorName, instance: actorInstance }, registeredThreadAllocator({
-    get: (key) => Effect.promise(() => directoryRuntime.runPromise(assignments.get(key))),
-    claim: (key, target, existingRoot, request) => Effect.promise(async () => {
-      const thread = await directoryRuntime.runPromise(assignments.claim(key, target, existingRoot, request))
-      if (thread !== undefined) await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
-      return thread
-    })
-  }, options.allocation))
   const actorCommits = await directoryRuntime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
-  const actorHead = async (): Promise<number> => {
-    const rows = await directoryRuntime.runPromise(directorySql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM actor_events`.pipe(Effect.orDie))
-    return Number(rows[0]?.head ?? 0)
-  }
-  const readActorPage = (mark: number, limit: number): Promise<ReadonlyArray<ThreadEventRow>> =>
-    directoryRuntime.runPromise(directorySql<{ seq: number; event: string }>`
-      SELECT seq, event FROM actor_events WHERE seq > ${mark} ORDER BY seq LIMIT ${limit}
-    `.pipe(
-      Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
-      Effect.orDie
-    ))
-  const actorThreads = (): Promise<{
-    readonly cursor: number
-    readonly threads: ReadonlyArray<ActorThreadRecord>
-  }> =>
-    directoryRuntime.runPromise(directorySql<{ seq: number; event: string }>`
-      SELECT seq, event FROM actor_events ORDER BY seq
-    `.pipe(
-      Effect.map((rows) => ({
-        cursor: Number(rows.at(-1)?.seq ?? 0),
-        threads: actorThreadsOf(rows.map((row) => JSON.parse(row.event) as Event))
-      })),
-      Effect.orDie
-    ))
-  const actorThread = async (thread: string): Promise<ActorThreadRecord | undefined> =>
-    (await actorThreads()).threads.find((record) => record.thread === thread)
-  const readyThreads = new Set((await actorThreads()).threads.filter((record) => record.state === "registered").map((record) => record.thread))
-  await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
-  const appendActorEvents = async (events: ReadonlyArray<Event>): Promise<void> => {
-    const result = await directoryRuntime.runPromise(directorySql.withTransaction(Effect.gen(function*() {
+  const localActorEvents: ThreadEventStore | undefined = localDirectory === undefined ? undefined : {
+    read: directorySql<{ event: string }>`SELECT event FROM actor_events ORDER BY seq`.pipe(
+      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie),
+    head: directorySql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM actor_events`.pipe(
+      Effect.map((rows) => Number(rows[0]?.head ?? 0)), Effect.orDie),
+    readFrom: (mark) => directorySql<{ event: string }>`SELECT event FROM actor_events WHERE seq > ${mark} ORDER BY seq`.pipe(
+      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie),
+    readPage: (mark, limit) => directorySql<{ seq: number; event: string }>`SELECT seq, event FROM actor_events WHERE seq > ${mark} ORDER BY seq LIMIT ${limit}`.pipe(
+      Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))), Effect.orDie),
+    append: (events, appendOptions = {}) => directorySql.withTransaction(Effect.gen(function*() {
       const rows = yield* directorySql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM actor_events`
       const current = Number(rows[0]?.head ?? 0)
+      if (appendOptions.expectedHead !== undefined && appendOptions.expectedHead !== current) return { appended: 0, head: current }
       let next = current
       for (const event of events) {
         const key = actorEventKeyOf(event) ?? threadSupervisorKeyOf(definition, event)
@@ -329,13 +327,44 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         next++
         yield* directorySql`INSERT INTO actor_events (seq, key, event) VALUES (${next}, ${key ?? null}, ${JSON.stringify(event)})`
       }
-      return { appended: next > current, head: next }
-    }).pipe(Effect.orDie)))
+      return { appended: next - current, head: next }
+    })).pipe(Effect.orDie)
+  }
+  const actorDirectory = options.actorDirectoryFor === undefined
+    ? { events: localActorEvents!, allocations: localAssignments! }
+    : await options.actorDirectoryFor({ actor: actorName, instance: actorInstance, keyOf: (event) => actorEventKeyOf(event) ?? threadSupervisorKeyOf(definition, event), requestThread: definition.methods.requestThread })
+  const runActor = <A>(effect: Effect.Effect<A>): Promise<A> => Effect.runPromise(effect)
+  const actorHead = async (): Promise<number> => {
+    return runActor(actorDirectory.events.head)
+  }
+  const readActorPage = (mark: number, limit: number): Promise<ReadonlyArray<ThreadEventRow>> =>
+    runActor(actorDirectory.events.readPage(mark, limit))
+  const actorThreads = (): Promise<{
+    readonly cursor: number
+    readonly threads: ReadonlyArray<ActorThreadRecord>
+  }> =>
+    runActor(Effect.all([actorDirectory.events.head, actorDirectory.events.read]).pipe(
+      Effect.map(([cursor, events]) => ({ cursor, threads: actorThreadsOf(events) }))
+    ))
+  const actorThread = async (thread: string): Promise<ActorThreadRecord | undefined> =>
+    (await actorThreads()).threads.find((record) => record.thread === thread)
+  const readyThreads = new Set((await actorThreads()).threads.filter((record) => record.state === "registered").map((record) => record.thread))
+  await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
+  const appendActorEvents = async (events: ReadonlyArray<Event>): Promise<void> => {
+    const result = await runActor(actorDirectory.events.append(events))
     for (const event of events) {
       if (event.type === "ThreadRegistered") readyThreads.add(String(event.thread))
     }
-    if (result.appended) await directoryRuntime.runPromise(PubSub.publish(actorCommits, result.head))
+    if (result.appended > 0) await directoryRuntime.runPromise(PubSub.publish(actorCommits, result.head))
   }
+  const localAllocator = instanceThreadAllocator({ actor: actorName, instance: actorInstance }, registeredThreadAllocator({
+    get: (key) => actorDirectory.allocations.get(key),
+    claim: (key, target, existingRoot, request) => actorDirectory.allocations.claim(key, target, existingRoot, request).pipe(
+      Effect.tap((thread) => thread === undefined ? Effect.void : Effect.promise(async () => {
+        await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
+      }))
+    )
+  }, options.allocation))
   const prepare = async (target: ThreadAddress, request?: ThreadAllocation): Promise<void> => {
     const record = await actorThread(target.thread)
     await Effect.runPromise(allocator.ensure(target, request ?? threadRequestOf(target, record)))
@@ -349,7 +378,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const target = { actor: actorName, instance: actorInstance, thread }
     await prepare(target, lineage === undefined ? { kind: "root", coordinate: target } : { kind: "child", parent: lineage.parent, child: childKeyOf(thread),
       ...(lineage.maxDepth === undefined ? {} : { maxDepth: lineage.maxDepth }), ...(lineage.placement === undefined ? {} : { placement: lineage.placement }) })
-    await directoryRuntime.runPromise(lineage === undefined
+    if (options.actorDirectoryFor === undefined) await directoryRuntime.runPromise(lineage === undefined
       ? directorySql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.asVoid, Effect.orDie)
       : directorySql`INSERT INTO thread_directory (thread, parent_thread, depth, placement)
           VALUES (${thread}, ${lineage.parent.thread}, ${lineage.depth}, ${lineage.placement ?? null})
@@ -359,9 +388,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
             placement = excluded.placement`.pipe(Effect.asVoid, Effect.orDie)
     )
   }
-  const threads = (): Promise<ReadonlyArray<string>> => directoryRuntime.runPromise(
-    directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie)
-  )
+  const threads = async (): Promise<ReadonlyArray<string>> => options.actorDirectoryFor === undefined
+    ? directoryRuntime.runPromise(directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie))
+    : (await actorThreads()).threads.filter((record) => record.state === "registered").map((record) => record.thread).sort()
   const storeKeyOf = (event: Event): string | undefined =>
     hostEventKeyOf(event, options.keyOf)
   const runtimes = new Map<string, Promise<BunThreadRuntime>>()
@@ -369,105 +398,114 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
 
   const openThread = async (thread: string): Promise<BunThreadRuntime> => {
     const filename = pathOf(thread)
-    if (filename !== "" && filename !== ":memory:") await mkdir(dirname(filename), { recursive: true })
-    const client = SqliteClient.layer({ filename })
+    if (options.eventStoreFor === undefined && filename !== "" && filename !== ":memory:") await mkdir(dirname(filename), { recursive: true })
+    const client = SqliteClient.layer({ filename: options.eventStoreFor === undefined ? filename : `${filename}.workspace.sqlite` })
     const workspaceSql = options.workspaceSql === false
       ? Layer.empty
       : options.workspaceSql === undefined
         ? bunWorkspaceSql().pipe(Layer.provide(SqliteClient.layer({ filename: workspaceSqlFile(filename) })))
         : options.workspaceSql.pipe(Layer.provide(client))
+    const suppliedWorkspace = options.workspaceFor === undefined
+      ? undefined
+      : await options.workspaceFor({ actor: actorName, instance: actorInstance, thread })
     const runtime = ManagedRuntime.make(Layer.mergeAll(
-      (options.workspace ?? bunWorkspace()).pipe(Layer.provideMerge(client)),
-      workspaceSql,
+      suppliedWorkspace === undefined
+        ? (options.workspace ?? bunWorkspace()).pipe(Layer.provideMerge(client))
+        : Layer.succeed(KeyValueStore.KeyValueStore, suppliedWorkspace),
+      suppliedWorkspace === undefined ? workspaceSql : Layer.empty,
       options.telemetry ?? Layer.empty
     )) as ManagedRuntime.ManagedRuntime<BunThreadServices, never>
-    let sql: SqlClient.SqlClient
+    let sql: SqlClient.SqlClient | undefined
     let workspace: KeyValueStore.KeyValueStore
     try {
-      sql = await runtime.runPromise(SqlClient.SqlClient)
-      await runtime.runPromise(initializeDatabase(threadMigrations))
-      await runtime.runPromise(sql`
+      if (options.eventStoreFor === undefined) {
+        sql = await runtime.runPromise(SqlClient.SqlClient)
+        await runtime.runPromise(initializeDatabase(threadMigrations))
+        await runtime.runPromise(sql`
         INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread)
         VALUES (1, ${actorName}, ${actorInstance}, ${thread})
-      `.pipe(Effect.orDie))
-      const identities = await runtime.runPromise(sql<{ actor: string; instance: string; thread: string }>`
+        `.pipe(Effect.orDie))
+        const identities = await runtime.runPromise(sql<{ actor: string; instance: string; thread: string }>`
         SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1
-      `.pipe(Effect.orDie))
-      if (
-        identities[0]?.actor !== actorName ||
-        identities[0]?.instance !== actorInstance ||
-        identities[0]?.thread !== thread
-      ) throw new Error("thread identity does not match its database")
+        `.pipe(Effect.orDie))
+        if (
+          identities[0]?.actor !== actorName ||
+          identities[0]?.instance !== actorInstance ||
+          identities[0]?.thread !== thread
+        ) throw new Error("thread identity does not match its database")
+      }
       workspace = await runtime.runPromise(KeyValueStore.KeyValueStore)
-    } catch (cause) {
-      await runtime.dispose()
-      throw cause
-    }
-    if (options.eventStoreFor !== undefined) {
-      const injected = await options.eventStoreFor({ actor: actorName, instance: actorInstance, thread, keyOf: storeKeyOf })
-      const injectedCommits = await runtime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
-      const wrapped: ThreadEventStore = { ...injected, append: (events, appendOptions = {}) => injected.append(events, appendOptions).pipe(Effect.tap((result) => result.appended > 0 ? PubSub.publish(injectedCommits, result.head) : Effect.void), Effect.orDie) }
-      return { runtime, store: wrapped, commits: injectedCommits, interruptions: effectInterruptionRegistry(), workspace }
-    }
-    const read: ThreadEventStore["read"] = sql<{ event: string }>`SELECT event FROM events ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
-    )
-    const head: ThreadEventStore["head"] = sql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events`.pipe(
-      Effect.map((rows) => Number(rows[0]?.head ?? 0)), Effect.orDie
-    )
-    const readFrom: ThreadEventStore["readFrom"] = (mark) => sql<{ event: string }>`SELECT event FROM events WHERE seq > ${mark} ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
-    )
-    const readPage: ThreadEventStore["readPage"] = (mark, limit) => sql<{ seq: number; event: string }>`
-      SELECT seq, event FROM events WHERE seq > ${mark} ORDER BY seq LIMIT ${limit}
-    `.pipe(
-      Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
-      Effect.orDie
-    )
     const commits = await runtime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
     const interruptions = effectInterruptionRegistry()
     const observer = options.commitObserverFor?.({ actorInstance, thread })
     const commitDispatcher = observer === undefined ? undefined : new CommitDispatcher(observer)
-    {
-      const currentHead = await runtime.runPromise(head)
-      await runtime.runPromise(PubSub.publish(commits, currentHead))
-    }
-    const append: ThreadEventStore["append"] = (events, options = {}) => {
-      if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
-      return sql.withTransaction(Effect.gen(function* () {
-        const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
-        const currentHead = Number(rows[0]?.seq ?? 0)
-        if (options.expectedHead !== undefined && currentHead !== options.expectedHead) return { appended: 0, head: currentHead }
-        let seq = currentHead + 1
-        let appended = 0
-        for (const event of events) {
-          const key = storeKeyOf(event)
-          if (key !== undefined) {
-            const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE key = ${key}`
-            if (Number(present[0]?.n ?? 0) > 0) continue
+    const baseStore: ThreadEventStore = options.eventStoreFor === undefined
+      ? (() => {
+          const localSql = sql!
+          const read: ThreadEventStore["read"] = localSql<{ event: string }>`SELECT event FROM events ORDER BY seq`.pipe(
+            Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie)
+          const head: ThreadEventStore["head"] = localSql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events`.pipe(
+            Effect.map((rows) => Number(rows[0]?.head ?? 0)), Effect.orDie)
+          return {
+            read,
+            head,
+            readFrom: (mark) => localSql<{ event: string }>`SELECT event FROM events WHERE seq > ${mark} ORDER BY seq`.pipe(
+              Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie),
+            readPage: (mark, limit) => localSql<{ seq: number; event: string }>`
+              SELECT seq, event FROM events WHERE seq > ${mark} ORDER BY seq LIMIT ${limit}
+            `.pipe(Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))), Effect.orDie),
+            append: (events, appendOptions = {}) => {
+              if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
+              return localSql.withTransaction(Effect.gen(function* () {
+                const rows = yield* localSql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
+                const currentHead = Number(rows[0]?.seq ?? 0)
+                if (appendOptions.expectedHead !== undefined && currentHead !== appendOptions.expectedHead) return { appended: 0, head: currentHead }
+                let seq = currentHead + 1
+                let appended = 0
+                for (const event of events) {
+                  const key = storeKeyOf(event)
+                  if (key !== undefined) {
+                    const present = yield* localSql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE key = ${key}`
+                    if (Number(present[0]?.n ?? 0) > 0) continue
+                  }
+                  yield* localSql`INSERT INTO events (seq, key, event) VALUES (${seq}, ${key ?? null}, ${JSON.stringify(event)})`
+                  seq += 1
+                  appended += 1
+                }
+                return { appended, head: seq - 1 }
+              })).pipe(Effect.orDie)
+            }
           }
-          yield* sql`INSERT INTO events (seq, key, event) VALUES (${seq}, ${key ?? null}, ${JSON.stringify(event)})`
-          seq += 1
-          appended += 1
-        }
-        return { appended, head: seq - 1 }
-      })).pipe(
-        Effect.tap((result) => result.appended > 0
-          ? Effect.all([
-              PubSub.publish(commits, result.head),
-              Effect.sync(() => commitDispatcher?.offer({ actor: actorName, instance: actorInstance, thread, head: result.head }))
-            ]).pipe(Effect.asVoid)
-          : Effect.void),
-        Effect.orDie
-      )
+        })()
+      : await options.eventStoreFor({ actor: actorName, instance: actorInstance, thread, keyOf: storeKeyOf })
+    const first = await runtime.runPromise(baseStore.readPage(0, 1))
+    if (first.length > 0) {
+      const identity = threadCreatedOf(first.map((row) => row.event))
+      if (identity === undefined || identity.address.actor !== actorName || identity.address.instance !== actorInstance || identity.address.thread !== thread) {
+        throw new Error("thread identity does not match its event store")
+      }
     }
+    const store: ThreadEventStore = {
+      ...baseStore,
+      append: (events, appendOptions) => baseStore.append(events, appendOptions).pipe(Effect.tap((result) => result.appended > 0
+        ? Effect.all([
+            PubSub.publish(commits, result.head),
+            Effect.sync(() => commitDispatcher?.offer({ actor: actorName, instance: actorInstance, thread, head: result.head }))
+          ]).pipe(Effect.asVoid)
+        : Effect.void))
+    }
+    await runtime.runPromise(PubSub.publish(commits, await runtime.runPromise(store.head)))
     return {
       runtime,
-      store: { append, read, head, readFrom, readPage },
+      store,
       commits,
       interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
       workspace
+    }
+    } catch (cause) {
+      await runtime.dispose()
+      throw cause
     }
   }
 
@@ -534,9 +572,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   ]
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
   const supervisor = threadSupervisorDriver(definition, withWatermark({
-    read: Effect.promise(() => directoryRuntime.runPromise(directorySql<{ event: string }>`SELECT event FROM actor_events ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
-    ))),
+    read: actorDirectory.events.read,
     append: (events) => Effect.promise(() => appendActorEvents(events))
   }), Layer.succeed(ThreadProvisioner, threadProvisioner({
     placement: defaultChildPlacement,
@@ -549,7 +585,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       return runtime.runtime.runPromise(runtime.store.append(events, options))
     }),
     register: (created) => Effect.promise(async () => {
-      await directoryRuntime.runPromise(directorySql`INSERT INTO thread_directory (thread, parent_thread, depth, placement)
+      if (options.actorDirectoryFor === undefined) await directoryRuntime.runPromise(directorySql`INSERT INTO thread_directory (thread, parent_thread, depth, placement)
         VALUES (${created.address.thread}, ${created.parent?.thread ?? null}, ${created.depth}, ${created.placement ?? null})
         ON CONFLICT(thread) DO NOTHING`.pipe(Effect.orDie))
       driver.mark(created.address.thread)
@@ -566,7 +602,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     reserve: async (request) => {
       const target = await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(ThreadAllocator, options.threadAllocator ?? localAllocator)))
       if (target.actor !== actorName || target.instance !== actorInstance) return target
-      const assigned = await directoryRuntime.runPromise(assignments.claim(threadAllocationKey(request), target, request.kind === "root", request))
+      const assigned = await runActor(actorDirectory.allocations.claim(threadAllocationKey(request), target, request.kind === "root", request))
       if (assigned !== target.thread) throw new Error("thread reservation conflicts with an existing assignment")
       await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
       return target
@@ -687,9 +723,16 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const recover = async (): Promise<void> => {
     await supervisor.drive()
     const registered = new Set((await actorThreads()).threads.filter((record) => record.state === "registered").map((record) => record.thread))
-    const directory = await directoryRuntime.runPromise(directorySql<{ thread: string; parent_thread: string | null; depth: number; placement: string | null }>`
-      SELECT thread, parent_thread, depth, placement FROM thread_directory ORDER BY thread
-    `.pipe(Effect.orDie))
+    const directory = options.actorDirectoryFor === undefined
+      ? await directoryRuntime.runPromise(directorySql<{ thread: string; parent_thread: string | null; depth: number; placement: string | null }>`
+          SELECT thread, parent_thread, depth, placement FROM thread_directory ORDER BY thread
+        `.pipe(Effect.orDie))
+      : (await actorThreads()).threads.map((record) => ({
+          thread: record.thread,
+          parent_thread: record.parentThread ?? null,
+          depth: record.depth,
+          placement: record.placement ?? null
+        }))
     for (const row of directory) {
       const thread = row.thread
       const threadRuntime = await runtimeOf(thread)
@@ -730,6 +773,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const threadRuntime = await runtimeOf(thread)
       return threadRuntime.runtime.runPromise(threadRuntime.store.readPage(mark, limit))
     },
+    storeFor: async (thread) => (await runtimeOf(thread)).store,
     awaitHead: async (thread, mark, signal) => {
       const threadRuntime = await runtimeOf(thread)
       const next = Stream.fromPubSub(threadRuntime.commits).pipe(

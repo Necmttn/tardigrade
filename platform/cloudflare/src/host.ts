@@ -4,7 +4,7 @@ import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type ThreadEventRow, type AppendOptions } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type ThreadEventRow, type AppendOptions, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
@@ -46,6 +46,8 @@ export type CloudflareThreadHostOptions<R> = {
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly keyOf?: (event: Event) => string | undefined
+  readonly eventStore?: ThreadEventStore
+  readonly workspace?: typeof KeyValueStore.KeyValueStore.Service
   readonly store?: CloudflareThreadStorePolicy
   readonly commitObserver?: CommitObserver
   // onPublish synchronously wakes local readers before asynchronous observer delivery (test/actor.workers.ts, durable publication).
@@ -88,15 +90,15 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     : undefined
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
-  const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
+  const workspaceRuntime = ManagedRuntime.make(options.workspace === undefined ? layerWorkspace(sql) : Layer.succeed(KeyValueStore.KeyValueStore, options.workspace))
   const workspaceStore = await workspaceRuntime.runPromise(KeyValueStore.KeyValueStore)
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined =>
     hostEventKeyOf(event, options.keyOf)
-  const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
+  const events = options.eventStore ?? new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
   const interruptions = effectInterruptionRegistry()
-  await Effect.runPromise(events.initialize())
+  if (events instanceof CloudflareEventStore) await Effect.runPromise(events.initialize())
   const sync = Effect.promise(() => options.storage.sync())
   const commitDispatcher = options.commitObserver === undefined
     ? undefined

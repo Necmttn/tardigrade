@@ -1,3 +1,6 @@
+import { SqliteClient } from "@effect/sql-sqlite-do"
+import { KeyValueStore } from "effect/unstable/persistence"
+import { CloudflareEventStore } from "../src/storage"
 import { modelLockService } from "@clavia/tardigrade-model/lock"
 import { upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
@@ -1554,4 +1557,44 @@ test("rejects remounting without replacing the actor", () => {
     expect(() => cloudflareWorker(definition)).toThrow('Worker already hosts actor "echo"; call defineWorkerHost once per module')
     expect(mountedActor).toBe(original)
   }
+})
+
+
+test("injected event stores retain publication and replay across host reopen", async () => {
+  await runInDurableObject(threadStub("injected-store"), async (_instance, state) => {
+    const sql = await Effect.runPromise(SqliteClient.SqliteClient.pipe(Effect.provide(SqliteClient.layer({ storage: state.storage }))))
+    const durable = new CloudflareEventStore(sql, (event) => typeof event.id === "string" ? event.id : undefined)
+    await Effect.runPromise(durable.initialize())
+    const workspace = await Effect.runPromise(KeyValueStore.KeyValueStore.pipe(Effect.provide(KeyValueStore.layerMemory)))
+    let appends = 0
+    const published: number[] = []
+    const eventStore = {
+      read: durable.read, head: durable.head,
+      readFrom: durable.readFrom.bind(durable), readPage: durable.readPage.bind(durable),
+      append: (...args: Parameters<typeof durable.append>) => {
+        appends++
+        return durable.append(...args)
+      }
+    }
+    const open = () => createCloudflareThreadHost({
+      storage: state.storage, actorName: "echo", actorInstance: "main", thread: "injected-store",
+      actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
+      eventStore, workspace, onPublish: (head) => published.push(head)
+    })
+    const first = await open()
+    try {
+      await first.appendAt([threadCreated(first.identity, undefined, 0)], 0)
+      await first.commitRoot({ type: "MessageReceived", id: "durable", at: 1 })
+      expect(appends).toBeGreaterThan(0)
+      expect(published.at(-1)).toBe(2)
+      await Effect.runPromise(workspace.set("retained", "yes"))
+    } finally { await first.close() }
+    const reopened = await open()
+    try {
+      expect((await reopened.read()).map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
+      expect(await Effect.runPromise(workspace.get("retained"))).toBe("yes")
+      expect(await reopened.appendAt([{ type: "MessageReceived", id: "stale", at: 2 }], 0)).toEqual({ appended: 0, head: 2 })
+      expect(published).toEqual([1, 2])
+    } finally { await reopened.close() }
+  })
 })

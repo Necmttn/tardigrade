@@ -12,7 +12,7 @@ import { Clock, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { eventLogFrom } from "@clavia/tardigrade-core/log"
+import { eventLogFrom, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord } from "@clavia/tardigrade-core/actor"
@@ -33,7 +33,7 @@ import { restingActor } from "@clavia/tardigrade-core/runtime"
 import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareActorSchema, CloudflareEventStore } from "./storage"
 import type { Env } from "./env"
-import { mountedActor, deployed, nonNegativeInteger, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./assembly"
+import { type CloudflareActorDirectory, mountedActor, deployed, nonNegativeInteger, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT } from "./assembly"
 
 export interface ActorThreadNode {
   readonly id: string
@@ -105,7 +105,8 @@ export class ActorDO extends DurableObject<Env> {
   private definition: ThreadSupervisor | undefined
   private readiness: ReturnType<typeof threadSupervisorDriver> | undefined
   private schema: Promise<void> | undefined
-  private eventStore: Promise<CloudflareEventStore> | undefined
+  private eventStore: Promise<ThreadEventStore> | undefined
+  private injectedDirectory: Promise<CloudflareActorDirectory> | undefined
   private actorName: string | undefined
   private actorInstance: string | undefined
   private readonly database = ManagedRuntime.make(SqliteClient.layer({ storage: this.ctx.storage }))
@@ -151,7 +152,18 @@ export class ActorDO extends DurableObject<Env> {
     return row
   }
 
-  private store(): Promise<CloudflareEventStore> {
+  private directory(): Promise<CloudflareActorDirectory> | undefined {
+    if (mountedActor?.actorDirectoryFor === undefined) return undefined
+    return this.injectedDirectory ??= Promise.resolve(mountedActor.actorDirectoryFor({
+      env: this.env, storage: this.ctx.storage, ...this.identity(),
+      keyOf: (event) => actorEventKeyOf(event) ?? threadSupervisorKeyOf(this.definition, event),
+      requestThread: this.definition!.methods.requestThread
+    }))
+  }
+
+  private store(): Promise<ThreadEventStore> {
+    const injected = this.directory()
+    if (injected !== undefined) return injected.then((directory) => directory.events)
     this.eventStore ??= this.database.runPromise(SqliteClient.SqliteClient).then(
       (sql) => new CloudflareEventStore(sql, (event) => actorEventKeyOf(event) ?? threadSupervisorKeyOf(this.definition, event))
     )
@@ -237,7 +249,7 @@ export class ActorDO extends DurableObject<Env> {
     const scope = request.kind === "root" ? request.coordinate : request.parent
     if (scope.actor !== identity.actor || scope.instance !== identity.instance) throw new Error("allocation requires the owning actor directory")
     const sql = await this.database.runPromise(SqliteClient.SqliteClient)
-    const store = sqlThreadDirectory(sql, "events", (target, existingRoot) =>
+    const store = (await this.directory())?.allocations ?? sqlThreadDirectory(sql, "events", (target, existingRoot) =>
       sql<{ event: string }>`SELECT event FROM events
         WHERE json_extract(event, '$.type') = 'ThreadRequested' AND json_extract(event, '$.thread') = ${target.thread}`.pipe(
         Effect.map((rows) => rows.length > 0 && (!existingRoot || rows.some((row) => upcastThreadRequest(JSON.parse(row.event)).parentThread !== undefined))), Effect.orDie

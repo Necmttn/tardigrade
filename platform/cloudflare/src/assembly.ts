@@ -2,6 +2,11 @@ import { modelLockSourceOf, upgradeModelLock, type ModelLockSource } from "@clav
 import type { ModelHostConfig } from "@clavia/tardigrade-model/selection"
 import { lockedModelConfigOf, modelCatalogForConfig as lockedCatalogForConfig, ModelLock, modelLockService } from "@clavia/tardigrade-model/lock"
 import { cloudflareDirectory } from "./transport/directory"
+import type { ThreadEventStore } from "@clavia/tardigrade-core/log"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { ActorMethodDeclaration } from "@clavia/tardigrade-core/actor/method"
+import type { ThreadAllocationStore } from "@clavia/tardigrade-host/allocation"
+import type { KeyValueStore } from "effect/unstable/persistence"
 import { Layer } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { type InferenceObserver } from "@clavia/tardigrade-agent"
@@ -150,6 +155,26 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
   context: CloudflareWorkerLayerContext<WorkerEnv>
 ) => CloudflareThreadStorePolicy
 
+export interface CloudflareThreadStoreContext<WorkerEnv extends Env = Env> extends CloudflareWorkerLayerContext<WorkerEnv> {
+  readonly actor: string
+  readonly instance: string
+  readonly keyOf: (event: Event) => string | undefined
+}
+
+export interface CloudflareActorDirectoryContext<WorkerEnv extends Env = Env> {
+  readonly env: WorkerEnv
+  readonly storage: DurableObjectStorage
+  readonly actor: string
+  readonly instance: string
+  readonly keyOf: (event: Event) => string | undefined
+  readonly requestThread: ActorMethodDeclaration
+}
+
+export interface CloudflareActorDirectory {
+  readonly events: ThreadEventStore
+  readonly allocations: ThreadAllocationStore
+}
+
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
   readonly streaming?: Partial<import("./transport/stream").CloudflareStreamPolicy>
   readonly authentication?: "bearer" | "none"
@@ -161,6 +186,9 @@ interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
   readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => CommitObserver
   readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
+  readonly eventStoreFor?: (context: CloudflareThreadStoreContext<WorkerEnv>) => ThreadEventStore | Promise<ThreadEventStore>
+  readonly actorDirectoryFor?: (context: CloudflareActorDirectoryContext<WorkerEnv>) => CloudflareActorDirectory | Promise<CloudflareActorDirectory>
+  readonly workspaceFor?: (context: Omit<CloudflareThreadStoreContext<WorkerEnv>, "keyOf">) => typeof KeyValueStore.KeyValueStore.Service | Promise<typeof KeyValueStore.KeyValueStore.Service>
   readonly defaultChildPlacement?: ChildPlacement
   readonly backgroundTaskOwner?: BackgroundTaskOwner
 }

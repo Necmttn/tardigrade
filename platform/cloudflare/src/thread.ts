@@ -1,3 +1,4 @@
+import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { AlarmScheduler } from "./alarm-scheduler"
 import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { eventTail, inferenceTail } from "@clavia/tardigrade-http/sse"
@@ -164,6 +165,9 @@ export class ThreadDO extends DurableObject<Env> {
     )
     const layerContext = { env: this.env, storage: this.ctx.storage, actorInstance, thread: currentThread }
     const commitObserver = mountedActor?.commitObserverFor?.(layerContext)
+    const storeContext = { ...layerContext, actor: actorName, instance: actorInstance, keyOf: (event: Event) => hostEventKeyOf(event, actorRuntimeOf(selectedAssembly).keyOf) }
+    const eventStore = await mountedActor?.eventStoreFor?.(storeContext)
+    const workspace = await mountedActor?.workspaceFor?.(storeContext)
     return createCloudflareThreadHost({
       threadAllocator: {
         allocate: (request) => Effect.promise(async () => {
@@ -173,6 +177,8 @@ export class ThreadDO extends DurableObject<Env> {
           return supervisor.allocateThread(request)
         })
       },
+      ...(eventStore === undefined ? {} : { eventStore }),
+      ...(workspace === undefined ? {} : { workspace }),
       storage: this.ctx.storage,
       actorName,
       actorInstance,
