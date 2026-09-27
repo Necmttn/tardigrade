@@ -1,0 +1,19 @@
+{
+  "name": "@clavia/tardigrade-experimental-examples",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "actors": "bun actors.ts",
+    "models:lock": "bun ../../../apps/cli/src/main.ts models lock",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-experimental-core": "workspace:*",
+    "@clavia/tardigrade-experimental-agent": "workspace:*",
+    "@clavia/tardigrade-experimental-packages": "workspace:*",
+    "@clavia/tardigrade-experimental-platform": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "effect": "4.0.0-rc.115"
+  }
+}

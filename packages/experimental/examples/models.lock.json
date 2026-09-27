@@ -1,0 +1,37 @@
+{
+  "schema": 2,
+  "providers": {
+    "openrouter": {
+      "protocol": "openai-chat-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "env": [
+        "OPENROUTER_API_KEY"
+      ]
+    }
+  },
+  "models": [
+    {
+      "contextWindowTokens": 200000,
+      "maxOutputTokens": 64000,
+      "pricing": {
+        "promptUsdPerToken": 0.000001,
+        "completionUsdPerToken": 0.000005,
+        "cachedPromptUsdPerToken": 1.0000000000000001e-7,
+        "cacheWritePromptUsdPerToken": 0.00000125
+      },
+      "toolCall": true,
+      "structuredOutput": true,
+      "inputModalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-haiku-4.5",
+      "source": "https://models.dev/api.json"
+    }
+  ]
+}

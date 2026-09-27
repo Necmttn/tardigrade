@@ -11,6 +11,8 @@ type Task = {
 const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
 const packages = ["tardie", "core", "code", "agent", "host", "channels", "client", "http", "model"]
+const experimental = ["core", "agent", "packages", "platform", "examples"]
+const experimentalPkg = (name: string) => pkg(`experimental/${name}`)
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
@@ -31,6 +33,7 @@ const tsconfigsIn = (directory: string): ReadonlyArray<string> =>
 const effectProjects = [
   ...tsconfigsIn(root),
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
+  ...experimental.flatMap((name) => tsconfigsIn(experimentalPkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
   ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
@@ -73,6 +76,7 @@ const tasks: ReadonlyArray<Task> = [
   // Root tsconfig covers tools/*.ts; each package typechecks itself against the shared base.
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
+  ...experimental.map((name) => ({ id: `typecheck:experimental-${name}`, cwd: experimentalPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "tsc", "--noEmit", "-p", "tsconfig.workers.json"] },
   ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
