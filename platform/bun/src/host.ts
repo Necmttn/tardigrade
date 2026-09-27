@@ -71,6 +71,7 @@ export type BunHostOptions<R> = {
   readonly database: string
   // threadDatabase selects the physical database for a thread. The default is bunThreadDatabasePath(database, thread).
   readonly threadDatabase?: (thread: string) => string
+  readonly eventStoreFor?: (context: { readonly actor: string; readonly instance: string; readonly thread: string; readonly keyOf: (event: Event) => string | undefined }) => ThreadEventStore | Promise<ThreadEventStore>
   readonly defaultChildPlacement?: ChildPlacement
   readonly telemetry?: Layer.Layer<never>
   readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
@@ -97,6 +98,7 @@ export interface BunHost {
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
   readonly readPage: (thread: string, mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
+  readonly storeFor: (thread: string) => Promise<ThreadEventStore>
   readonly awaitHead: (thread: string, mark: number, signal?: AbortSignal) => Promise<number>
   readonly readActorPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly actorThreads: () => Promise<{
@@ -400,6 +402,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     } catch (cause) {
       await runtime.dispose()
       throw cause
+    }
+    if (options.eventStoreFor !== undefined) {
+      const injected = await options.eventStoreFor({ actor: actorName, instance: actorInstance, thread, keyOf: storeKeyOf })
+      const injectedCommits = await runtime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
+      const wrapped: ThreadEventStore = { ...injected, append: (events, appendOptions = {}) => injected.append(events, appendOptions).pipe(Effect.tap((result) => result.appended > 0 ? PubSub.publish(injectedCommits, result.head) : Effect.void), Effect.orDie) }
+      return { runtime, store: wrapped, commits: injectedCommits, interruptions: effectInterruptionRegistry(), workspace }
     }
     const read: ThreadEventStore["read"] = sql<{ event: string }>`SELECT event FROM events ORDER BY seq`.pipe(
       Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
