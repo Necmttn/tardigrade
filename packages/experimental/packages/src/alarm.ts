@@ -1,31 +1,30 @@
+import { isDeepStrictEqual } from "node:util"
 import { ToolError } from "./errors"
-import { Clock, Context, Effect, Schema } from "effect"
-import { tool } from "./tool"
+import { Clock, Effect, Schema } from "effect"
+import { Deadline, EffectExecution, durableAtom, durablePromise } from "@clavia/tardigrade-experimental-core"
+import { Promises } from "@clavia/tardigrade-experimental-host"
+import { tool, promiseTool, ToolPromise } from "./tool"
 import { definePackage } from "./package"
 
-export const Alarm = Schema.Struct({
-  alarmId: Schema.NonEmptyString,
-  at: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(8_640_000_000_000_000)),
-  message: Schema.NonEmptyString,
+const Alarm = Schema.Struct({ alarmId: Schema.NonEmptyString, at: Deadline, message: Schema.NonEmptyString })
+
+const ReturnedPromise = Schema.Struct({ type: Schema.Literal("ToolReturned"), promise: ToolPromise })
+const promises = durableAtom({
+  schema: Schema.Array(ToolPromise), initial: [],
+  reduce: (state, event: unknown) => Schema.is(ReturnedPromise)(event) ? [...state, event.promise] : state,
 })
-export type Alarm = typeof Alarm.Type
 
-export class AlarmScheduler extends Context.Service<AlarmScheduler, {
-  readonly set: (alarm: Alarm) => Effect.Effect<void, Error>
-  readonly cancel: (alarmId: string) => Effect.Effect<void, Error>
-}>()("tardigrade/experimental/packages/AlarmScheduler") {}
-
-// alarm records reminders through the actor's alarm scheduler.
+// alarm exposes reminders as clock promises and records cancellation through promise settlement.
 export function alarm() {
-  return definePackage({ name: "alarm", description: "Schedule and cancel recorded reminders.", methods: [
-    tool({
+  return definePackage({ name: "alarm", description: "Schedule and cancel reminders.", methods: [
+    promiseTool({
       name: "set_alarm",
-      description: "Record a reminder and return its alarmId immediately. Supply message and either afterSeconds or an ISO timestamp with a timezone in at. An overdue alarm rings when the host is running.",
+      description: "Schedule a reminder and return its promise immediately. Supply message and either afterSeconds or an ISO timestamp with a timezone in at. The reminder arrives in the inbox when the promise settles.",
       input: Schema.Union([
         Schema.Struct({ message: Schema.NonEmptyString, afterSeconds: Schema.Finite }),
         Schema.Struct({ message: Schema.NonEmptyString, at: Schema.String }),
       ]),
-      run: (input, call) => Effect.gen(function* () {
+      submit: (input, call) => Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         const value = yield* Effect.try({
           try: () => {
@@ -43,17 +42,22 @@ export function alarm() {
           catch: ToolError.from,
         })
         const validated = yield* Schema.decodeEffect(Alarm)(value).pipe(Effect.mapError(ToolError.from))
-        yield* (yield* AlarmScheduler).set(validated)
-        return validated
+        return { executor: "clock", id: validated.alarmId, at: validated.at, value: validated }
       }),
     }),
     tool({
       name: "cancel_alarm",
-      description: "Cancel a pending reminder by alarmId.",
-      input: Schema.Struct({ alarmId: Schema.NonEmptyString }),
-      run: ({ alarmId }) => Effect.gen(function* () {
-        yield* (yield* AlarmScheduler).cancel(alarmId)
-        return { alarmId, cancelled: true }
+      description: "Cancel a pending reminder using the complete promise returned by set_alarm.",
+      input: Schema.Struct({ promise: ToolPromise }),
+      run: ({ promise }) => Effect.gen(function* () {
+        if (promise.handle.executor !== "clock") return yield* Effect.fail(new ToolError("Expected a clock promise"))
+        const execution = yield* EffectExecution
+        if (!execution.get(promises).some(value => isDeepStrictEqual(value, promise))) return yield* Effect.fail(new ToolError("Unknown alarm promise"))
+        const state = execution.get(durablePromise(promise.ref, { success: Schema.Json, error: Schema.String }).state)
+        if (state.status !== "pending") return { cancelled: false, reason: "Promise already settled" }
+        yield* (yield* Promises).cancel(promise)
+        yield* execution.record({ type: "PromiseSettled", ref: promise.ref, result: { status: "rejected", error: "Alarm cancelled" } })
+        return { cancelled: true }
       }),
     }),
   ] })

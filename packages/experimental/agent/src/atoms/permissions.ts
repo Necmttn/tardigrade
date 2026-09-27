@@ -1,44 +1,57 @@
-import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { settledProjection } from "./settled-projection"
+import { EffectExecution, RuntimeError } from "@clavia/tardigrade-experimental-core"
 import { Effect, Schema } from "effect"
-import { atom, type Atom, durableAtom, effectValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
+import { atom, type Atom, eventValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
 import { PermissionState, permissionState, type ToolState } from "../projections"
-import { PermissionRequests } from "../services/requests"
-import { Decision, type Event, type ToolCall } from "../event"
+import { requestPromises } from "./requests"
+import type { ToolSpec } from "@clavia/tardigrade-experimental-packages"
+import { PermissionRequests, requestResult } from "../services/requests"
+import { Decision, PermissionPolicy, type Event } from "../event"
 
 type PermissionView<R> = typeof PermissionState.Type & {
-  readonly position: "ready" | "checking" | "waiting"
+  readonly position: "configuring" | "ready" | "checking" | "waiting"
   readonly effect?: EffectValue<Event, Error, R>
 }
-type Policy = (call: typeof ToolCall.Type) => typeof Decision.Type
+export const DEFAULT_PERMISSION_POLICY: typeof PermissionPolicy.Type = { default: "ask", tools: {} }
 
-export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy: Policy }): Atom<PermissionView<never>>
-export function permissions(pendingTools: Atom<typeof ToolState.Type>): Atom<PermissionView<PermissionRequests>>
-export function permissions(pendingTools: Atom<typeof ToolState.Type>, options?: { readonly policy: Policy }): Atom<PermissionView<PermissionRequests>> {
-  const decisions = durableAtom({ schema: PermissionState, initial: { requested: [], decisions: [] }, reduce: permissionState })
+// permissions records its initial policy and uses logged updates for subsequent calls.
+export function permissions(pendingTools: Atom<typeof ToolState.Type>, options: { readonly policy?: typeof PermissionPolicy.Type; readonly tools?: Atom<{ readonly specs: readonly ToolSpec[] }> } = {}): Atom<PermissionView<PermissionRequests | EffectExecution>> {
+  const initialPolicy = Schema.decodeSync(PermissionPolicy)(options.policy ?? DEFAULT_PERMISSION_POLICY)
+  const decisions = settledProjection({ schema: PermissionState, initial: { policy: null, decisions: [] }, reduce: permissionState })
   return atom(get => {
     const state = get(decisions)
+    if (!state.policy) return {
+      ...state, position: "configuring",
+      effect: eventValue({ id: "configure", event: { type: "PermissionConfigured", policy: initialPolicy } satisfies Event }),
+    }
     const call = get(pendingTools).pending
     if (!call || state.decisions.some(value => value.callId === call.callId)) return { ...state, position: "ready" }
-    if (options?.policy) return {
-      ...state, position: "ready",
-      decisions: [...state.decisions, { callId: call.callId, decision: Schema.decodeSync(Decision)(options.policy(call)) }],
+    if (get(requestPromises).some(item => item.type === "PermissionResolved" && item.callId === call.callId)) return { ...state, position: "waiting" }
+    const metadata = options.tools ? get(options.tools).specs.find(tool => tool.name === call.name)?.metadata : undefined
+    const mode = Object.hasOwn(state.policy.tools, call.name) ? state.policy.tools[call.name]!
+      : metadata?.readOnly === true && state.policy.readOnly ? state.policy.readOnly : state.policy.default
+    if (mode !== "ask") return {
+      ...state, position: "checking",
+      effect: eventValue({ id: `resolve:${call.callId}`, event: {
+        type: "PermissionResolved", callId: call.callId, decision: { allowed: mode === "allow", reason: `Permission policy: ${mode}` },
+      } satisfies Event }),
     }
-    if (state.requested.includes(call.callId)) return { ...state, position: "waiting" }
     return {
-      ...state,
-      position: "checking",
-      effect: effectValue({
+      ...state, position: "checking",
+      effect: {
+        kind: "effect" as const,
         id: call.callId,
-        request: { type: "PermissionRequested" as const, callId: call.callId },
         run: Effect.gen(function* () {
           const service = yield* PermissionRequests
-          const answer = yield* service.request(call)
-          return yield* Schema.decodeEffect(Decision)(answer).pipe(Effect.mapError(RuntimeError.from))
+          const answer = yield* service.request(call, metadata)
+          const result = yield* Schema.decodeEffect(requestResult(Decision))(answer).pipe(Effect.mapError(RuntimeError.from))
+          if (result.type === "decision") return { type: "PermissionResolved", callId: call.callId, decision: result.decision } as const
+          const execution = yield* EffectExecution
+          return { type: "PermissionResolved", callId: call.callId, promise: { ref: execution.ref, handle: result.handle, ...(result.mode ? { mode: result.mode } : {}) } } as const
         }).pipe(
-          Effect.catch(error => Effect.succeed({ allowed: false, reason: `Permission request failed: ${error.message}` })),
-          Effect.map(decision => ({ type: "PermissionResolved" as const, callId: call.callId, decision })),
+          Effect.catch(error => Effect.succeed({ type: "PermissionResolved" as const, callId: call.callId, decision: { allowed: false, reason: `Permission request failed: ${error.message}` } })),
         ),
-      }),
+      },
     }
   })
 }
