@@ -1,0 +1,62 @@
+import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { Effect, Schema } from "effect"
+import { atom, type Atom, durableAtom, effectValue, type EffectValue } from "@clavia/tardigrade-experimental-core"
+import { ToolBudgetState, toolBudgetState, type ToolState } from "../projections"
+import { BudgetRequests } from "../services/requests"
+import { BudgetDecision, type Event } from "../event"
+import { BudgetRequestInput } from "../budget-tools"
+
+export type ToolBudgetView<R = never> = {
+  readonly used: number
+  readonly limit: number
+  readonly remaining: number
+  readonly decision: { readonly allowed: boolean; readonly reason: string } | null
+  readonly request: { readonly callId: string; readonly reason: string } | null
+  readonly response?: typeof BudgetDecision.Type | { readonly error: string }
+  readonly effect?: EffectValue<Event, Error, R>
+}
+
+export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly maxCalls: number }): Atom<ToolBudgetView>
+export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly maxCalls: number; readonly requestTool: string }): Atom<ToolBudgetView<BudgetRequests>>
+export function toolBudget(pendingTools: Atom<typeof ToolState.Type>, options: { readonly maxCalls: number; readonly requestTool?: string }): Atom<ToolBudgetView<BudgetRequests>> {
+  if (!Number.isSafeInteger(options.maxCalls) || options.maxCalls < 0) throw new RuntimeError("maxCalls must be a nonnegative safe integer")
+  const usage = durableAtom({ schema: ToolBudgetState, initial: { used: 0, charged: [], granted: 0, requested: [], decisions: [] }, reduce: toolBudgetState })
+  return atom(get => {
+    const state = get(usage)
+    const { pending, running } = get(pendingTools)
+    const limit = options.maxCalls + state.granted
+    if (!Number.isSafeInteger(limit)) throw new RuntimeError("Tool budget exceeds safe integer range")
+    const remaining = Math.max(0, limit - state.used)
+    const base = { used: state.used, limit, remaining }
+    const resolution = state.decisions.find(value => value.callId === pending?.callId)?.decision
+    if (pending && pending.name === options.requestTool) {
+      const waiting = { ...base, decision: null, request: { callId: pending.callId, reason: "Waiting for budget decision" } }
+      if (resolution) return { ...base, decision: null, request: null, response: resolution }
+      if (remaining > 0) return { ...base, decision: null, request: null, response: { error: "Tool budget is not exhausted" } }
+      let input: typeof BudgetRequestInput.Type
+      try { input = Schema.decodeUnknownSync(BudgetRequestInput, { onExcessProperty: "error" })(pending.input) }
+      catch (error) { return { ...base, decision: null, request: null, response: { error: String(error) } } }
+      if (state.requested.includes(pending.callId)) return waiting
+      return {
+        ...waiting,
+        effect: effectValue({
+          id: pending.callId,
+          request: { type: "BudgetRequested" as const, callId: pending.callId, ...input },
+          run: Effect.gen(function* () {
+            const service = yield* BudgetRequests
+            const answer = yield* service.request({ callId: pending.callId, ...input, used: state.used, limit })
+            const decision = yield* Schema.decodeEffect(BudgetDecision)(answer).pipe(Effect.mapError(RuntimeError.from))
+            if (decision.allowed && !Number.isSafeInteger(limit + decision.additionalCalls)) return yield* Effect.fail(new RuntimeError("Total tool budget exceeds safe integer range"))
+            return decision
+          }).pipe(
+            Effect.catch(error => Effect.succeed({ allowed: false as const, reason: `Budget request failed: ${error.message}` })),
+            Effect.map(decision => ({ type: "BudgetResolved" as const, callId: pending.callId, decision })),
+          ),
+        }),
+      }
+    }
+    if (resolution && !resolution.allowed) return { ...base, decision: resolution, request: null }
+    if (!pending || running || remaining > 0) return { ...base, decision: { allowed: true, reason: "Tool budget available" }, request: null }
+    return { ...base, decision: null, request: { callId: pending.callId, reason: `Tool budget exhausted: ${state.used}/${limit} calls` } }
+  })
+}

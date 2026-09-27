@@ -1,0 +1,17 @@
+{
+  "vars": {
+    "TARDIGRADE_CONFIG": {
+      "models": {
+        "allow": [{ "provider": "openrouter", "model_ids": ["anthropic/claude-haiku-4.5"] }],
+        "providers": {
+          "openrouter": {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "protocol": "openai-chat-completions",
+            "env": ["OPENROUTER_API_KEY"]
+          }
+        },
+        "default": { "provider": "openrouter", "model_id": "anthropic/claude-haiku-4.5" }
+      }
+    }
+  }
+}

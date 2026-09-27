@@ -1,0 +1,21 @@
+{
+  "name": "@clavia/tardigrade-experimental-platform",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./bun": "./src/bun/index.ts",
+    "./cloudflare": "./src/cloudflare/index.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-experimental-core": "workspace:*",
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

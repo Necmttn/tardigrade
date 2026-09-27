@@ -5,6 +5,10 @@
     "@clavia/tardigrade-ui"
   ],
   "workspaces": {
+    "packages/experimental/examples": {
+      "entry": ["*.ts!"],
+      "project": ["*.ts"]
+    },
     ".": {
       "ignoreDependencies": [
         "@effect/tsgo",

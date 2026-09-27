@@ -1,0 +1,169 @@
+import { RuntimeError } from "@clavia/tardigrade-experimental-core"
+import { Schema } from "effect"
+import { ToolCall, Decision, BudgetDecision, type Event, type MessageReceived } from "./event"
+
+const Message = Schema.Union([
+  Schema.Struct({ role: Schema.Literal("user"), text: Schema.String }),
+  Schema.Struct({ role: Schema.Literal("assistant"), text: Schema.String, toolCalls: Schema.Array(ToolCall) }),
+  Schema.Struct({ role: Schema.Literal("tool"), callId: Schema.String, name: Schema.String, text: Schema.String, error: Schema.Boolean }),
+])
+export const Conversation = Schema.Array(Message)
+
+// inboxMessage selects messages that require an inference turn; replies resolve task exchanges.
+function inboxMessage(event: MessageReceived): { readonly turnId: string; readonly text: string } | undefined {
+  if (event.kind === "reply") return undefined
+  if (event.kind === "message") return event
+  return {
+    turnId: `request:${JSON.stringify([event.taskId, event.request.requestId])}`,
+    text: `Child request (data): ${JSON.stringify({ taskId: event.taskId, ...event.request })}`,
+  }
+}
+
+export function trajectoryState(state: typeof Conversation.Type, event: Event): typeof Conversation.Type {
+  if (event.type === "MessageReceived") {
+    const message = inboxMessage(event)
+    return message ? [...state, { role: "user", text: message.text }] : state
+  }
+  if (event.type === "ModelReturned" && event.purpose === "inference") return [...state, { role: "assistant", text: event.text, toolCalls: event.toolCalls }]
+  if (event.type === "ToolReturned") {
+    const call = state.flatMap(message => message.role === "assistant" ? message.toolCalls : []).find(call => call.callId === event.callId)
+    if (call) return [...state, { role: "tool", callId: event.callId, name: call.name, text: event.error ?? event.output, error: event.error !== null }]
+  }
+  return state
+}
+
+const Turn = Schema.Struct({
+  turnId: Schema.String, settlement: Schema.NullOr(Schema.Literals(["completed", "failed", "cancelled"])), answer: Schema.NullOr(Schema.String),
+  calls: Schema.Array(Schema.Struct({ callId: Schema.String, returned: Schema.Boolean })),
+  outstanding: Schema.Array(Schema.String),
+})
+export const InferenceState = Schema.Struct({
+  turns: Schema.Array(Turn),
+  turnId: Schema.String, callId: Schema.String, needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
+})
+export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", needsReply: false, running: false, waiting: false }
+
+export function inferState(state: typeof InferenceState.Type, event: Event): typeof InferenceState.Type {
+  let turns = state.turns
+  if (event.type === "MessageReceived") {
+    const message = inboxMessage(event)
+    if (!message) return state
+    if (turns.some(turn => turn.turnId === message.turnId)) throw new RuntimeError(`Duplicate turn: ${message.turnId}`)
+    turns = [...turns, { turnId: message.turnId, settlement: null, answer: null, calls: [], outstanding: [] }]
+  }
+  if (event.type === "ModelCalled" && event.purpose === "inference") {
+    if (!state.needsReply || state.running || state.waiting || event.turnId !== state.turnId || event.callId !== state.callId) {
+      throw new RuntimeError(`Model call is unavailable: ${event.callId}`)
+    }
+    turns = turns.map(turn => turn.turnId === event.turnId ? { ...turn, calls: [...turn.calls, { callId: event.callId, returned: false }] } : turn)
+  }
+  if (event.type === "ModelReturned" && event.purpose === "inference") {
+    if (!state.running || event.callId !== state.callId) throw new RuntimeError(`No matching running model call: ${event.callId}`)
+    if (new Set(event.toolCalls.map(call => call.callId)).size !== event.toolCalls.length) throw new RuntimeError("Duplicate tool call IDs in model reply")
+    turns = turns.map(turn => turn.calls.some(call => call.callId === event.callId) ? {
+      ...turn, answer: event.toolCalls.length === 0 ? event.text : null,
+      calls: turn.calls.map(call => call.callId === event.callId ? { ...call, returned: true } : call),
+      outstanding: event.toolCalls.map(call => call.callId),
+    } : turn)
+  }
+  if (event.type === "TurnSettled") {
+    const turn = turns.find(turn => turn.turnId === event.turnId)
+    if (!turn || turn.settlement !== null || event.turnId !== state.turnId) throw new RuntimeError(`No matching active turn: ${event.turnId}`)
+    if (event.outcome === "completed" && (turn.answer === null || turn.answer !== event.output || state.running || state.waiting)) {
+      throw new RuntimeError(`Turn has no final answer: ${event.turnId}`)
+    }
+    if (event.outcome !== "completed" && turn.outstanding.length) throw new RuntimeError("Outstanding tools must settle before ending a turn")
+    turns = turns.map(value => value === turn ? { ...value, settlement: event.outcome } : value)
+  }
+  if (event.type === "ToolReturned" && turns.some(turn => turn.outstanding.includes(event.callId))) {
+    turns = turns.map(turn => turn.outstanding.includes(event.callId)
+      ? { ...turn, outstanding: turn.outstanding.filter(id => id !== event.callId) }
+      : turn)
+  }
+  if (turns === state.turns) return state
+  const turn = turns.find(turn => turn.settlement === null)
+  const running = turn?.calls.find(call => !call.returned)
+  const turnId = turn?.turnId ?? ""
+  return { turns, turnId, callId: running?.callId ?? `model:${turnId}:${turn?.calls.length ?? 0}`, needsReply: turn !== undefined && turn.answer === null, running: running !== undefined, waiting: (turn?.outstanding.length ?? 0) > 0 }
+}
+
+export const CompactionState = Schema.Struct({
+  through: Schema.Finite, summary: Schema.String,
+  pending: Schema.NullOr(Schema.Struct({ callId: Schema.String, through: Schema.Finite })),
+})
+export function compactState(state: typeof CompactionState.Type, event: Event): typeof CompactionState.Type {
+  if (event.type === "ModelCalled" && event.purpose === "compaction") {
+    if (state.pending || !Number.isSafeInteger(event.through) || event.through <= state.through) throw new RuntimeError(`Compaction call is unavailable: ${event.callId}`)
+    return { ...state, pending: { callId: event.callId, through: event.through } }
+  }
+  if (event.type === "ModelReturned" && event.purpose === "compaction") {
+    if (!state.pending || event.callId !== state.pending.callId) throw new RuntimeError(`No matching running compaction: ${event.callId}`)
+    return { through: state.pending.through, summary: event.text, pending: null }
+  }
+  return state
+}
+
+export const ToolState = Schema.Struct({
+  queue: Schema.Array(Schema.Struct({ call: ToolCall, running: Schema.Boolean })),
+  pending: Schema.NullOr(ToolCall), running: Schema.Boolean,
+})
+export function toolState(state: typeof ToolState.Type, event: Event): typeof ToolState.Type {
+  let queue = state.queue
+  if (event.type === "ModelReturned" && event.purpose === "inference" && event.toolCalls.length > 0) queue = [...queue, ...event.toolCalls.map(call => ({ call, running: false }))]
+  if (event.type === "ToolCalled" && queue.some(item => item.call.callId === event.callId && !item.running)) queue = queue.map(item => item.call.callId === event.callId && !item.running ? { ...item, running: true } : item)
+  if (event.type === "ToolReturned" && queue.some(item => item.call.callId === event.callId)) queue = queue.filter(item => item.call.callId !== event.callId)
+  return queue === state.queue ? state : { queue, pending: queue[0]?.call ?? null, running: queue[0]?.running ?? false }
+}
+
+export const PermissionState = Schema.Struct({ requested: Schema.Array(Schema.String), decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: Decision })) })
+export function permissionState(state: typeof PermissionState.Type, event: Event): typeof PermissionState.Type {
+  if (event.type === "PermissionRequested" && !state.requested.includes(event.callId)) return { ...state, requested: [...state.requested, event.callId] }
+  if (event.type === "PermissionResolved") {
+    const prior = state.decisions.findLast(value => value.callId === event.callId)?.decision
+    if (prior?.allowed === event.decision.allowed && prior.reason === event.decision.reason) return state
+    return { ...state, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
+  }
+  return state
+}
+
+export const TasksState = Schema.Array(Schema.Struct({ taskId: Schema.String, callId: Schema.String, name: Schema.String, position: Schema.Literals(["running", "settled"]), output: Schema.String, error: Schema.NullOr(Schema.String) }))
+export function tasksState(state: typeof TasksState.Type, event: Event): typeof TasksState.Type {
+  if (event.type === "TaskStarted") {
+    const task: typeof TasksState.Type[number] = { taskId: event.taskId, callId: event.callId, name: event.name, position: "running", output: "", error: null }
+    const prior = state.find(item => item.taskId === event.taskId)
+    if (prior?.position === "running" && prior.callId === event.callId && prior.name === event.name && prior.output === "" && prior.error === null) return state
+    return prior ? state.map(item => item === prior ? task : item) : [...state, task]
+  }
+  if (event.type === "TaskSettled") {
+    const prior = state.find(task => task.taskId === event.taskId)
+    if (!prior || (prior.position === "settled" && prior.output === event.output && prior.error === event.error)) return state
+    return state.map(task => task === prior ? { ...task, position: "settled", output: event.output, error: event.error } : task)
+  }
+  return state
+}
+
+export const ToolBudgetState = Schema.Struct({
+  used: Schema.Finite, charged: Schema.Array(Schema.String), granted: Schema.Finite, requested: Schema.Array(Schema.String),
+  decisions: Schema.Array(Schema.Struct({ callId: Schema.String, decision: BudgetDecision })),
+})
+export function toolBudgetState(state: typeof ToolBudgetState.Type, event: Event): typeof ToolBudgetState.Type {
+  if (event.type === "BudgetRequested") {
+    if (state.requested.includes(event.callId)) throw new RuntimeError("Duplicate budget request")
+    return { ...state, requested: [...state.requested, event.callId] }
+  }
+  if (event.type === "ToolCalled" && event.charged && !state.charged.includes(event.callId)) return { ...state, used: state.used + 1, charged: [...state.charged, event.callId] }
+  if (event.type === "BudgetResolved") {
+    const prior = state.decisions.find(value => value.callId === event.callId)
+    if (prior) {
+      const same = prior.decision.allowed
+        ? event.decision.allowed && prior.decision.additionalCalls === event.decision.additionalCalls
+        : !event.decision.allowed && prior.decision.reason === event.decision.reason
+      if (!same) throw new RuntimeError(`Conflicting budget resolution: ${event.callId}`)
+      return state
+    }
+    const granted = state.granted + (event.decision.allowed ? event.decision.additionalCalls : 0)
+    if (!Number.isSafeInteger(granted)) throw new RuntimeError("Total tool budget exceeds safe integer range")
+    return { ...state, granted, decisions: [...state.decisions, { callId: event.callId, decision: event.decision }] }
+  }
+  return state
+}
