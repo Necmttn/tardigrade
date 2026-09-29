@@ -1,3 +1,4 @@
+import type { ComponentStateSchema } from "../component/machine"
 import type { Event } from "../event"
 import type { ActorMethods, ActorMethodDeclaration } from "../actor/method"
 import type { Projection } from "../projection/projection"
@@ -45,16 +46,21 @@ export interface ActorMethodView<Output = unknown> {
  *                         └──── method history remembered by the projection
  */
 export interface ActorMethodProjection<State, Output = unknown>
-  extends Projection<State, ActorMethodView<Output>> {}
+  extends Projection<State, ActorMethodView<Output>> {
+  readonly checkpoint?: ComponentStateSchema<State>
+}
 
 // ErasedActorMethodProjection preserves a method projection inside heterogeneous method tables.
 export interface ErasedActorMethodProjection
-  extends Projection<unknown, ActorMethodView<unknown>> {}
+  extends Projection<unknown, ActorMethodView<unknown>> {
+  readonly checkpoint?: ComponentStateSchema<unknown>
+}
 
 // eraseActorMethodProjection hides private method state from heterogeneous method tables.
 export const eraseActorMethodProjection = <State, Output>(
   projection: ActorMethodProjection<State, Output>
 ): ErasedActorMethodProjection => ({
+  ...(projection.checkpoint === undefined ? {} : { checkpoint: projection.checkpoint as ComponentStateSchema<unknown> }),
   initial: projection.initial,
   step: (state, event) => projection.step(state as State, event),
   output: (state) => projection.output(state as State)

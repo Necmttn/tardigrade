@@ -1,3 +1,4 @@
+import type { ComponentOutputContext, ComponentStateSchema } from "../component/machine"
 import type { TransitionContext } from "../transition/transition"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -41,7 +42,9 @@ export interface DurableMethodInput {
 }
 
 export interface DurableInputProjection<State>
-  extends Omit<Projection<State, ReadonlyArray<Transition<never>>>, "step"> {
+  extends Omit<Projection<State, ReadonlyArray<Transition<never>>>, "step" | "output"> {
+  readonly checkpoint?: ComponentStateSchema<State>
+  readonly output: (state: State, context: ComponentOutputContext) => ReadonlyArray<Transition<never>>
   readonly step: (state: State, event: Event, context: TransitionContext) => State
 }
 
@@ -52,9 +55,10 @@ export interface ErasedDurableInputProjection
 export const durableInputProjection = <State>(
   projection: DurableInputProjection<State>
 ): ErasedDurableInputProjection => ({
+  ...(projection.checkpoint === undefined ? {} : { checkpoint: projection.checkpoint as ComponentStateSchema<unknown> }),
   initial: projection.initial,
   step: (state, event, context) => projection.step(state as State, event, context),
-  output: (state) => projection.output(state as State)
+  output: (state, context) => projection.output(state as State, context)
 })
 
 // ActorMethodDeclaration is the erased shape a heterogeneous method table preserves. eventOf validates unknown input before constructing the durable event.

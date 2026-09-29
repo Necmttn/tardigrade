@@ -3,7 +3,7 @@ import { Self } from "../runtime/context"
 import type { TransitionContext } from "../transition/transition"
 import type { Event } from "../event"
 import { expect, expectTypeOf, test } from "bun:test"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref, Schema } from "effect"
 import { component } from "./machine"
 import { machineOf } from "./runtime"
 import { composeComponents } from "./composition/siblings"
@@ -50,4 +50,34 @@ test("runtime binds data once per reconciler activation", async () => {
     return yield* log.read
   }).pipe(Effect.provideService(Router, { send: () => Effect.void }), Effect.provideService(Self, { actor: "reader", instance: "main", thread: "root" })))
   expect(events.filter(event => event.type === "Read").map(event => event.label)).toEqual(["first", "first"])
+})
+
+class Formatter extends Context.Service<Formatter, { readonly format: (value: number) => string }>()("test/Formatter") {}
+
+test("checkpoint restore binds output services independently of durable state", () => {
+  let initialCalls = 0
+  let oldCalls = 0
+  let freshCalls = 0
+  const make = () => machineOf(component({
+    name: "formatted",
+    dependencies: [Formatter] as const,
+    checkpoint: { version: "1", schema: Schema.Finite },
+    initial: () => { initialCalls++; return 0 },
+    step: state => state + 1,
+    output: (state, _children, [formatter]) => ({ view: formatter.format(state), transitions: [] })
+  }))
+  const original = make()
+  const state = original.step(original.initial(Context.make(Formatter, { format: value => { oldCalls++; return `value:${value}` } })), { type: "Tick" })
+  const encoded = JSON.parse(JSON.stringify(original.checkpoint!.encode(state)))
+  expect(encoded).toEqual({ component: "formatted", version: "1", state: 1 })
+  const fresh = make()
+  expect(() => fresh.checkpoint!.decode(encoded)).toThrow("test/Formatter")
+  const restored = fresh.checkpoint!.decode(encoded, Context.make(Formatter, { format: value => { freshCalls++; return `value:${value}` } }))
+  expect(initialCalls).toBe(1)
+  expect(fresh.output(restored).view).toBe(original.output(state).view)
+  expect(freshCalls).toBe(1)
+  expect(oldCalls).toBe(2)
+  expect(fresh.output(fresh.step(restored, { type: "Tick" })).view).toBe("value:2")
+  expect(freshCalls).toBe(2)
+  expect(oldCalls).toBe(2)
 })

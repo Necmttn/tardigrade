@@ -1,4 +1,5 @@
-import { Context } from "effect"
+import type { ComponentCheckpoint } from "./checkpoint"
+import { Context, Schema } from "effect"
 import { createMachine } from "./composition/parent"
 import { registerComponent } from "./runtime"
 import { composeKeys } from "../log/keys"
@@ -13,6 +14,14 @@ import { inputScopesOf, type ComponentInputs } from "../transition/interaction"
 
 export type { TransitionContext } from "../transition/transition"
 export type { InvocationCancellation } from "../interaction/events"
+
+export { ComponentCheckpoint } from "./checkpoint"
+
+// ComponentStateSchema defines the synchronous JSON encoding and compatibility version of private state.
+export interface ComponentStateSchema<State> {
+  readonly version: string
+  readonly schema: Schema.Codec<State, Schema.Json>
+}
 
 /**
  * ComponentMachine erases private component state while preserving its Moore-style machine contract.
@@ -29,23 +38,37 @@ export type { InvocationCancellation } from "../interaction/events"
  * Cancellation is an optional state query that derives cleanup transitions for one invocation.
  */
 export interface ComponentMachine<View, Requirements = never, Result = never, Interactions = unknown>
-  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {}
+  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {
+  readonly checkpoint?: {
+    readonly component: string
+    readonly encode: (state: unknown) => ComponentCheckpoint
+    readonly decode: (checkpoint: ComponentCheckpoint, data?: Context.Context<never>) => unknown
+  }
+}
 
-// ComponentDependencies names data services bound when a component snapshot is initialized.
+// ComponentDependencies names runtime services bound when a component is initialized or restored.
 export type ComponentDependencies = ReadonlyArray<Context.Key<unknown, unknown>>
 export type ComponentData<D extends ComponentDependencies> = { readonly [K in keyof D]: Context.Service.Shape<D[K]> }
 export type ComponentDataRequirements<D extends ComponentDependencies> = Context.Service.Identifier<D[number]>
 type ChildRequirements<C extends ComponentChildren> = ComponentRequirements<C extends ReadonlyArray<unknown> ? C[number] : C>
 
+// ComponentOutputContext rebuilds occurrence-bound declarations from positioned events using the component's supplied scopes.
+export interface ComponentOutputContext {
+  readonly transition: (event: Event) => TransitionContext
+}
+
 // ComponentDefinition is the typed author surface for a component machine.
 export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown, Input extends ComponentInputs = ComponentInputs> {
   readonly name: string
+  // checkpoint encodes private state; change its version when stored state or reducer semantics become incompatible.
+  readonly checkpoint?: ComponentStateSchema<State> | ((children: ChildOf<Children>) => ComponentStateSchema<State>)
   readonly children?: Children
   readonly input?: Input
   readonly dependencies?: Dependencies
   readonly initial: (children: ChildOf<Children>, data: ComponentData<Dependencies>) => State
   readonly step: (state: Readonly<State>, event: Event, context: TransitionContext, children: ChildOf<Children>, previous: ChildOf<Children>) => State
-  readonly output: (state: Readonly<State>, children: ChildOf<Children>) => ComponentOutput<View, Requirements, Result, Interactions>
+  // output derives behavior using runtime dependencies bound for this initialization or restore (dependencies.test.ts).
+  readonly output: (state: Readonly<State>, children: ChildOf<Children>, data: ComponentData<Dependencies>, context: ComponentOutputContext) => ComponentOutput<View, Requirements, Result, Interactions>
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
@@ -64,6 +87,9 @@ export const component = <State, View, Requirements = never, Result = unknown, c
   }
   if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
   const members: ReadonlyArray<Component<unknown, unknown>> = definition.children === undefined ? [] : Array.isArray(definition.children) ? [...definition.children] : [definition.children as Component<unknown, unknown>]
+  if (definition.checkpoint !== undefined) {
+    if (typeof definition.checkpoint !== "function" && definition.checkpoint.version.length === 0) throw new Error("Component checkpoints require a nonempty version")
+  }
   const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...members])
   const fragments = members.flatMap((child) => child.keys === undefined ? [] : [child.keys])
   const inherited = mergeComponentContracts(members)

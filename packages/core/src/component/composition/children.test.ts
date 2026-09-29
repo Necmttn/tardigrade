@@ -1,6 +1,6 @@
 import { machineOf } from "../runtime"
 import { expect, expectTypeOf, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Equal, HashMap, Option, Schema } from "effect"
 import { eventAt } from "../../event"
 import { replayState } from "../../projection/projection"
 import { bindTransitionContext, type TransitionContext } from "../../transition/transition"
@@ -73,7 +73,7 @@ test("wrapper handles retain their snapshots and advance children before parent 
   const snapshot = replayState(machineOf(wrapped), [{ type: "Requested" }, { type: "Other" }])
   expect(machineOf(wrapped).output(snapshot).view).toEqual({ parent: 2, child: 2 })
   expect(handles.map((handle) => handle.output().view.count)).toEqual([0, 1, 2])
-  expect(Object.keys(handles[1]!).sort()).toEqual(["admission", "output"])
+  expect(Object.keys(handles[1]!).sort()).toEqual(["admission", "at", "output", "retain"])
   expectTypeOf<Parameters<NonNullable<ReturnType<ChildOf<typeof child>["output"]>["transitions"][number]["respond"]>>[0]>().toEqualTypeOf<{ readonly error: string }>()
   const proposal = handles[1]!.output().transitions[0]!
   const completion = machineOf(wrapped).output(snapshot).transitions[0]!.respond!({ error: "denied" })
@@ -152,4 +152,30 @@ test("multiple children retain distinct view types", () => {
   })
   const state = replayState(machineOf(wrapped), [{ type: "Requested" }])
   expect(machineOf(wrapped).output(state).view).toEqual([1, "Requested"])
+})
+
+
+test("historical references preserve distinct states and reject foreign children", () => {
+  const make = (name: string) => machineOf(component({
+    name, checkpoint: { version: "1", schema: Schema.Finite },
+    initial: () => 0, step: state => state + 1,
+    output: state => ({ view: state, transitions: [] })
+  }))
+  const machine = make("child")
+  const first = bindChild(machine, machine.initial())
+  const second = bindChild(machine, machine.step(machine.initial(), eventAt({ type: "Tick" }, 1)), 1, 12)
+  expect(first.retain()).toBe(first.retain())
+  expect(Equal.equals(first.retain(), second.retain())).toBe(false)
+  const states = HashMap.set(HashMap.make(["offer", first.retain()]), "offer", second.retain())
+  expect(Option.getOrThrow(HashMap.get(states, "offer"))).toBe(second.retain())
+  expect(second.at(first.retain()).output().view).toBe(0)
+  expect(first.at(second.retain()).output().view).toBe(1)
+  const other = make("other")
+  expect(() => first.at(bindChild(other, other.initial()).retain())).toThrow("different child")
+  const encoded = JSON.parse(JSON.stringify(Schema.encodeSync(first.snapshotSchema!)(second.retain())))
+  const freshMachine = make("child")
+  const fresh = bindChild(freshMachine, freshMachine.initial())
+  const restored = Schema.decodeUnknownSync(fresh.snapshotSchema!)(encoded)
+  expect(fresh.at(restored).output().view).toBe(1)
+  expect(() => Schema.encodeSync(first.snapshotSchema!)(restored)).toThrow()
 })

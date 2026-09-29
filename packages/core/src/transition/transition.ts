@@ -1,8 +1,9 @@
+import { pureData } from "./data"
 import { OperationScope } from "../runtime/context"
 import { Effect, Schema } from "effect"
 import { effect, type ExternalEffect } from "../effect"
 import { intent, type Intent } from "../intent"
-import { Event, eventPositionOf } from "../event"
+import { Event, eventAt, eventPositionOf } from "../event"
 import type { EventLog } from "../log/service"
 import { InvocationRef, actorInvocationContextFrom, sameInvocation } from "../interaction/invocation"
 import { interactionEvents, type InteractionRequest, type InteractionScope } from "./interaction"
@@ -213,4 +214,47 @@ export const transitionComponentIds = (components: ReadonlyArray<{ readonly [TRA
     }
   }
   return [...seen]
+}
+
+// EventIntentRecord stores event payloads whose at field is supplied at commit time (event-intent.test.ts).
+export const EventIntentRecord = Schema.Struct({
+  version: Schema.Literal("1"),
+  ref: TransitionRef,
+  invocation: Schema.optionalKey(InvocationRef),
+  events: Schema.Array(Schema.Json)
+})
+export type EventIntentRecord = typeof EventIntentRecord.Type
+const EVENT_INTENT: unique symbol = Symbol("eventIntent")
+
+// eventIntent declares data-only events with an explicit commit-time timestamp contract (event-intent.test.ts).
+export const eventIntent = (
+  context: TransitionContext,
+  tag: string,
+  events: ReadonlyArray<Event>,
+  options?: { readonly invocation?: InvocationRef | null }
+): Intent<never> => {
+  const payloads = pureData(events) as ReadonlyArray<Event>
+  for (const event of payloads) {
+    Schema.decodeSync(Event)(event)
+    if ("at" in event || "transitionRef" in event || "invocationRef" in event) throw new Error("Event intent payload contains runtime metadata")
+  }
+  const transition = context.intent(tag, at => payloads.map(event => ({ ...event, at })), options)
+  const ref = references.get(transition)
+  if (ref === undefined) throw new Error("Event intent requires a runtime transition context")
+  const record: EventIntentRecord = {
+    version: "1", ref, events: payloads as ReadonlyArray<Schema.Json>,
+    ...(transition.invocation === undefined ? {} : { invocation: transition.invocation })
+  }
+  return annotateTransition(transition, EVENT_INTENT, pureData(record) as EventIntentRecord)
+}
+
+// eventIntentRecordOf exposes a declared event record without evaluating its timestamp callback (event-intent.test.ts).
+export const eventIntentRecordOf = (transition: Intent<never>): EventIntentRecord | undefined =>
+  (transition as Intent<never> & { readonly [EVENT_INTENT]?: EventIntentRecord })[EVENT_INTENT]
+
+// restoreEventIntent reconstructs response identity and commit-time timestamping from data (event-intent.test.ts).
+export const restoreEventIntent = (value: EventIntentRecord): Intent<never> => {
+  const record = Schema.decodeUnknownSync(EventIntentRecord, { onExcessProperty: "error" })(pureData(value))
+  return eventIntent(bindTransitionContext(eventAt({ type: "RestoredResponse" }, record.ref.seq), record.ref.component), record.ref.tag,
+    record.events as ReadonlyArray<Event>, { invocation: record.invocation ?? null })
 }

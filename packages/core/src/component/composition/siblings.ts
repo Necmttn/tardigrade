@@ -1,7 +1,7 @@
 import { machineOf, registerComponent } from "../runtime"
 import { TRANSITION_COMPONENT_IDS, transitionComponentIds, validateTransitions } from "../../transition/transition"
-import { Chunk } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { Chunk, Context, Schema } from "effect"
+import { PositionedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { materializeProjection, type MaterializedProjectionState } from "@clavia/tardigrade-core/projection"
 import type { ViewAlgebra } from "@clavia/tardigrade-core/view"
 import { composeKeys } from "../../log/keys"
@@ -12,6 +12,7 @@ import {
   type ComponentResult
 } from "../component"
 import {
+  type ComponentCheckpoint,
   type ComponentMachine,
   type InvocationCancellation
 } from "../machine"
@@ -30,6 +31,7 @@ export { independentTransitions } from "./reconciliation"
 
 // CompositionOptions selects proposed work using the explicitly combined public view.
 export type CompositionOptions<R = never, View = unknown, Inputs = ReadonlyArray<unknown>, Interactions = unknown> = {
+  readonly checkpoint?: { readonly version: string }
   readonly reconcile?: TransitionReconciler<R, View>
   readonly interactions?: (children: Inputs) => Interactions
 }
@@ -90,6 +92,11 @@ export function composeComponents<
         keyOf: composeKeys(...fragments)
       }
   const machines = members.map((component) => machineOf(component))
+  const checkpoint = options.checkpoint
+  if (checkpoint !== undefined) {
+    if (checkpoint.version.length === 0) throw new Error("Component checkpoints require a nonempty version")
+    if (machines.some(machine => machine.checkpoint === undefined)) throw new Error(`Component "${name}" requires checkpoint support from every child`)
+  }
   const materialized = machines.map(materializeProjection)
   const reconcile = options.reconcile
 
@@ -108,17 +115,15 @@ export function composeComponents<
     transitions: [...left.transitions, ...right.transitions]
   })
 
+  const fromChildren = (children: ReadonlyArray<ChildState>, history: Chunk.Chunk<Event>): CompositionState => {
+    const root = buildOutputTree(children.map(child => child.value), { view: algebra.empty, transitions: [] }, combine)
+    return { children, root, history, output: outputFrom(root.output, history, children) }
+  }
+  const History = Schema.toCodecJson(Schema.Chunk(PositionedEvent))
   const projection = materializeProjection<CompositionState, PublicOutput>({
     initial: (data) => {
       const children = materialized.map((machine) => machine.initial(data))
-      const root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
-      const history = Chunk.empty<Event>()
-      return {
-        children,
-        root,
-        history,
-        output: outputFrom(root.output, history, children)
-      }
+      return fromChildren(children, Chunk.empty<Event>())
     },
     step: (state, event) => {
       let children: Array<ChildState> | undefined
@@ -162,6 +167,33 @@ export function composeComponents<
     ...(keys === undefined ? {} : { keys }),
 
   }, {
+    ...(checkpoint === undefined ? {} : { checkpoint: {
+      component: name,
+      encode: (snapshot: unknown): ComponentCheckpoint => {
+        const state = (snapshot as CachedState).state
+        return {
+          component: name,
+          version: checkpoint.version,
+          state: Schema.encodeSync(History)(state.history),
+          children: machines.map((machine, index) => machine.checkpoint!.encode(state.children[index]!.state))
+        }
+      },
+      decode: (encoded: ComponentCheckpoint, data?: Context.Context<never>): CachedState => {
+        if (encoded.component !== name || encoded.version !== checkpoint.version) throw new Error(`Incompatible checkpoint for component "${name}"`)
+        const children = encoded.children ?? []
+        if (children.length !== members.length || members.some((member, index) => children[index]?.component !== machineOf(member).checkpoint?.component)) {
+          throw new Error(`Incompatible checkpoint children for component "${name}"`)
+        }
+        const restored = machines.map((machine, index) => {
+          const state = machine.checkpoint!.decode(children[index]!, data)
+          return { state, value: machine.output(state) }
+        })
+        const history = Schema.decodeSync(History)(encoded.state)
+        const state = fromChildren(restored, history)
+        validateTransitions(state.output.transitions)
+        return { state, value: state.output }
+      }
+    } }),
     initial: projection.initial,
     step: (state, event) => projection.step(state as CachedState, event),
     output: (state) => projection.output(state as CachedState)

@@ -1,8 +1,10 @@
+import { ComponentCheckpoint } from "../component/checkpoint"
+import { ThreadAddress } from "../transport/endpoint"
 import { Context } from "effect"
 import { machineOf } from "../component/runtime"
 import { CancellationRequested, CancellationInput, CancellationResult, type CancellationDispatched, type InvocationCancellation } from "./events"
 import { Cause, Clock, Effect, Schema } from "effect"
-import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, PositionedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { bindTransitionContext, transitionKeyOf } from "../transition/transition"
 import { replayProjection, replayState } from "@clavia/tardigrade-core/projection"
 import { EventLog } from "../log"
@@ -14,7 +16,7 @@ import { formatThreadAddress, parseThreadAddress } from "../transport/endpoint"
 import { Router } from "../transport/router"
 import type { ThreadLineage } from "./relations"
 import type { Component } from "@clavia/tardigrade-core/component"
-import { InvocationRef, invocationKey, sameInvocation, invocationCoordinateKey, type InvocationCoordinate } from "./invocation"
+import { InvocationRef, invocationKey, sameInvocation, invocationCoordinateKey, InvocationCoordinate } from "./invocation"
 import { actorMethod, type ActorMethodDeclaration, type ActorMethods } from "../actor/method"
 import { cancellationStateOf, initialMethodStates, reduceMethodStates, type ActorMethodCancellationState } from "./state"
 
@@ -283,6 +285,29 @@ interface ActorCancellationProjectionState {
   readonly recorded: ReadonlySet<string>
 }
 
+const CancellationCheckpoint = Schema.toCodecJson(Schema.Struct({
+  methods: Schema.Record(Schema.String, Schema.Struct({ version: Schema.String, state: Schema.Json })),
+  components: Schema.Array(ComponentCheckpoint),
+  requests: Schema.Array(Schema.Struct({
+    event: PositionedEvent,
+    cancellation: Schema.Struct({
+      request: Schema.String, invocation: InvocationRef, cause: Schema.Literals(["requested", "deadline"]),
+      reason: Schema.optionalKey(Schema.String), deadlineAt: Schema.optionalKey(Schema.Finite)
+    }),
+    accepted: Schema.optional(Schema.Literals(["running", "cancelled", "terminal"]))
+  })),
+  links: Schema.Array(Schema.Struct({
+    owner: PositionedEvent, reference: InvocationCoordinate, parent: InvocationRef,
+    lineage: Schema.optionalKey(Schema.Struct({
+      parent: ThreadAddress, depth: Schema.Int, maxDepth: Schema.optionalKey(Schema.Int),
+      placement: Schema.optionalKey(Schema.Literals(["colocated", "independent"]))
+    }))
+  })),
+  settledCalls: Schema.ReadonlySet(Schema.String),
+  dispatchedCancellations: Schema.ReadonlySet(Schema.String),
+  recorded: Schema.ReadonlySet(Schema.String)
+}))
+
 const projectedChildSettled = (state: { readonly settledCalls: ReadonlySet<string>; readonly requests: ReadonlyArray<{ readonly cancellation: InvocationCancellation }> }, link: ProjectedChildLink): boolean =>
   state.settledCalls.has(invocationCoordinateKey(link.reference)) || state.requests.some(({ cancellation }) =>
     sameInvocation(cancellation.invocation, link.parent) &&
@@ -414,7 +439,38 @@ export const actorCancellationProjection = <R>(
     }
     return [...terminals, ...obligations]
   }
+  const checkpointable = Object.values(methods).every((method) => method.projection.checkpoint !== undefined) &&
+    components.every((entry) => machineOf(entry).checkpoint !== undefined)
   return {
+    ...(checkpointable ? { checkpoint: {
+      encode: (erased: unknown) => {
+        const state = erased as ActorCancellationProjectionState
+        return Schema.encodeSync(CancellationCheckpoint)({
+          ...state,
+          methods: Object.fromEntries(Object.entries(methods).map(([name, method]) => {
+            const codec = method.projection.checkpoint!
+            if (codec.version.length === 0) throw new Error("method checkpoints require a nonempty version")
+            return [name, { version: codec.version, state: Schema.encodeSync(codec.schema)(state.methods.get(name)) }]
+          })),
+          components: components.map((entry, index) => machineOf(entry).checkpoint!.encode(state.components[index]))
+        })
+      },
+      decode: (encoded: Schema.Json, data?: Context.Context<never>): ActorCancellationProjectionState => {
+        const state = Schema.decodeSync(CancellationCheckpoint)(encoded)
+        if (state.components.length !== components.length || Object.keys(state.methods).length !== Object.keys(methods).length) throw new Error("actor checkpoint layout mismatch")
+        return {
+          ...state,
+          requests: state.requests.map((request) => ({ ...request, accepted: request.accepted })),
+          methods: new Map(Object.entries(methods).map(([name, method]) => {
+            const codec = method.projection.checkpoint!
+            const saved = state.methods[name]
+            if (codec.version.length === 0 || saved?.version !== codec.version) throw new Error(`incompatible method checkpoint ${name}`)
+            return [name, Schema.decodeSync(codec.schema)(saved.state)]
+          })),
+          components: components.map((entry, index) => machineOf(entry).checkpoint!.decode(state.components[index]!, data))
+        }
+      }
+    } } : {}),
     initial,
     step: (state, event) => reduce(state as ActorCancellationProjectionState, event),
     output: (erased) => {

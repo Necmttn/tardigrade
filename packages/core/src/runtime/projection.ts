@@ -1,3 +1,5 @@
+import { Context, Schema } from "effect"
+import { MethodResponseCheckpoint, MethodTimeoutCheckpoint } from "../interaction/checkpoint"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Component } from "@clavia/tardigrade-core/component"
 import type { ActorProjection, Self } from "@clavia/tardigrade-core/runtime/reconciler"
@@ -7,6 +9,8 @@ import { CANCELLATION_CONTROL_METHOD, actorCancellationComponentTransitions, act
 import { initialMethodResponseState, methodResponseTransitions, reduceMethodResponseState, type MethodResponseProjectionState } from "../interaction/respond"
 import { initialMethodTimeoutState, methodTimeoutTransitions, reduceMethodTimeoutState, type MethodTimeoutProjectionState } from "../interaction/timeout"
 import type { ActorMethods } from "../actor/method"
+
+const StateCheckpoint = Schema.Struct({ cancellation: Schema.Json, response: MethodResponseCheckpoint, timeout: MethodTimeoutCheckpoint })
 
 interface ActorProjectionState {
   readonly cancellation: unknown
@@ -24,6 +28,16 @@ export const actorProjection = <R>(
 ): ActorProjection<R | Router | Self> => {
   const cancellation = actorCancellationProjection(methods, components, keyOf, childTimeoutMs)!
   return {
+    ...(cancellation.checkpoint === undefined ? {} : { checkpoint: {
+      encode: (erased: unknown) => {
+        const state = erased as ActorProjectionState
+        return Schema.encodeSync(StateCheckpoint)({ ...state, cancellation: cancellation.checkpoint!.encode(state.cancellation) })
+      },
+      decode: (encoded: Schema.Json, data?: Context.Context<never>): ActorProjectionState => {
+        const state = Schema.decodeUnknownSync(StateCheckpoint)(encoded)
+        return { ...state, cancellation: cancellation.checkpoint!.decode(state.cancellation, data) }
+      }
+    } }),
     initial: (data): ActorProjectionState => ({
       cancellation: cancellation.initial(data),
       response: initialMethodResponseState(),

@@ -1,3 +1,5 @@
+import { checkpointCandidate, type ActorCheckpointPersistence } from "@clavia/tardigrade-host/checkpoint"
+import type { ActorRecovery } from "@clavia/tardigrade-core/runtime"
 import { threadExecutions } from "@clavia/tardigrade-host/execution"
 import { threadSupervisorDriver, threadSupervisorKeyOf } from "@clavia/tardigrade-host/thread-supervisor"
 import { hostThreadAllocator } from "@clavia/tardigrade-host/allocation"
@@ -63,6 +65,7 @@ export const BUN_CHILD_PLACEMENTS = ["colocated"] as const satisfies ReadonlyArr
 export const DEFAULT_BUN_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 export type BunHostOptions<R> = {
+  readonly checkpoint?: { readonly version: string; readonly onRecovery?: (thread: string, recovery: ActorRecovery) => void }
   readonly supervisor?: ThreadSupervisor
   readonly signal?: AbortSignal
   readonly allocation?: ThreadAllocationPolicy
@@ -123,6 +126,7 @@ export interface BunHost {
 
 interface BunThreadRuntime {
   readonly runtime: ManagedRuntime.ManagedRuntime<BunThreadServices, never>
+  readonly checkpoint?: ActorCheckpointPersistence
   readonly store: ThreadEventStore
   readonly commits: PubSub.PubSub<number>
   readonly commitDispatcher?: CommitDispatcher
@@ -214,6 +218,15 @@ const threadMigrations = SqliteMigrator.fromRecord({
       event TEXT NOT NULL
     ) WITHOUT ROWID`
     yield* sql`CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL`
+  }),
+  "0003_actor_checkpoint": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE actor_checkpoint (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      stream TEXT NOT NULL,
+      checkpoint TEXT
+    )`
+    yield* sql`INSERT INTO actor_checkpoint (singleton, stream) VALUES (1, lower(hex(randomblob(16))))`
   })
 })
 
@@ -453,8 +466,23 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         Effect.orDie
       )
     }
+    let checkpoint: ActorCheckpointPersistence | undefined
+    if (options.checkpoint !== undefined) {
+      const rows = await runtime.runPromise(sql<{ stream: string }>`SELECT stream FROM actor_checkpoint WHERE singleton = 1`.pipe(Effect.orDie))
+      checkpoint = {
+        identity: { actor: actorName, version: options.checkpoint.version, stream: rows[0]!.stream },
+        onRecovery: (recovery) => options.checkpoint?.onRecovery?.(thread, recovery),
+        store: {
+          load: sql<{ checkpoint: string | null }>`SELECT checkpoint FROM actor_checkpoint WHERE singleton = 1`.pipe(
+            Effect.map((rows) => checkpointCandidate(rows[0]?.checkpoint ?? undefined)), Effect.orDie
+          ),
+          save: (saved) => sql`UPDATE actor_checkpoint SET checkpoint = ${JSON.stringify(saved)} WHERE singleton = 1`.pipe(Effect.asVoid, Effect.orDie)
+        }
+      }
+    }
     return {
       runtime,
+      ...(checkpoint === undefined ? {} : { checkpoint }),
       store: { append, read, head, readFrom, readPage },
       commits,
       interruptions,
@@ -634,7 +662,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       await prepare({ actor: actorName, instance: actorInstance, thread })
       const threadRuntime = await runtimeOf(thread)
       await threadRuntime.runtime.runPromise(
-        executionOf(thread, actor).settle.pipe(Effect.provide(await layersOf(thread))),
+        executionOf(thread, actor, threadRuntime.checkpoint).settle.pipe(Effect.provide(await layersOf(thread))),
         options.signal === undefined ? {} : { signal: options.signal }
       )
       await synchronizeAlarm(thread)

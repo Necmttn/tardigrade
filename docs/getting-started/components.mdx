@@ -320,3 +320,64 @@ const searchTool = (
   })
 })
 ```
+
+## Runtime dependencies
+
+Declare runtime services in `dependencies`. The framework binds them once per initialization or restore and supplies them to `initial(children, data)` and `output(state, children, data)`. A restore obtains services from its supplied runtime context; checkpoints contain only the component's private state and child checkpoints.
+
+Keep live services and executable implementations outside private state. Output can derive proposed work from durable facts and its dependency bindings. Equivalent replay and restored behavior require compatible dependency configuration. Changing that configuration can intentionally change derived output.
+
+## Checkpoint state
+
+A component can opt into the framework's checkpoint encoding contract with a synchronous Effect Schema and an explicit compatibility version:
+
+```ts
+const counter = component({
+  name: "counter",
+  checkpoint: {
+    version: "1",
+    schema: Schema.Struct({ count: Schema.Finite })
+  },
+  initial: () => ({ count: 0 }),
+  step: (state, event) => event.type === "Tick"
+    ? { count: state.count + 1 }
+    : state,
+  output: (state) => ({ view: state, transitions: [] })
+})
+```
+
+The schema encodes private state as JSON and restores its runtime representation. Its round trip must preserve everything the reducer and output function need for future events. Change the version when the stored representation or reducer semantics become incompatible with existing checkpoints. Schema validation cannot detect a behavioral change in the reducer.
+
+A parent declares a schema for its own state. The framework recursively checkpoints its children, preserves child admission positions and timestamps, and rebuilds handles and outputs on restore without calling initializers. Every child must support checkpointing. Child names, order, and versions must match the restored tree.
+
+`composeComponents` opts in through `{ checkpoint: { version: "1" } }` in its options. Its private representation is managed by the framework. Change this version when its view algebra, interaction projection, or reconciliation behavior becomes incompatible. Compositions with a custom reconciler retain their event history in the checkpoint because reconciliation reads that history; checkpoint size can therefore grow with the log.
+
+Checkpoint encoding and decoding are internal machine operations. The actor reconciler captures execution bookkeeping and the durable log watermark together. The Bun host can persist that checkpoint in the thread database and load it during recovery.
+
+
+### Historical child state
+
+A parent can retain a private child snapshot with `child.retain()` and read that snapshot through `child.at(snapshot)`. The reference exposes no child state. Different snapshots have identity equality, including when stored in persistent collections. A reference from another child is rejected.
+
+A checkpointed parent that retains historical children declares `checkpoint` as a function of its child handles. The child's `snapshotSchema` encodes each retained reference through that child's own checkpoint contract and restores its state under the new runtime context. The parent schema can include these references alongside its other state. Retained snapshots can increase checkpoint size because their private state is encoded in addition to the current child state.
+
+### Actor recovery boundary
+
+`createActorReconciler(runtime, { checkpoint: { actor, version, stream }, restore })` enables runtime checkpointing. Every transition projection and the optional control projection must supply a state codec. Component transition adapters carry their component codec through this boundary. Runtimes with complete-log cancellation callbacks are unsupported. Compiled actors support checkpointing when every component, method projection, and durable input validation projection declares a checkpoint. Method and validation projections use `{ version, schema }`, with the same JSON round-trip contract as component state. Complete-history method and validation adapters remain unsupported. Custom components must declare their own state schemas.
+
+After synchronization, `reconciler.checkpoint()` captures the published projection states, completed transition keys, tracing context, and log watermark together. It can capture blocked work as well as a resting actor. Events appended after that watermark belong to the recovery tail. A host must serialize drives of an activation and store the entire checkpoint atomically against the same immutable stream. Capture does not append to the log or write storage.
+
+Recovery validates the envelope, identity, watermark, and projection codecs before publishing restored state. A compatible checkpoint skips prefix reduction and reads from its watermark. A rejected checkpoint falls back to full replay, with the reason exposed by `reconciler.recovery()`. Failure while reducing the tail remains an execution failure; a later drive retries from the published prefix.
+
+The host supplies a stable stream identity that changes when a log is replaced. The actor version covers projection order, guards, key derivation, reducer behavior, and dependency configuration. Change it when those semantics become incompatible. Identity and schema checks do not authenticate checkpoint contents or detect arbitrary edits to a log prefix. Preserve the full event log for fallback recovery.
+
+
+### Bun checkpoint storage
+
+Pass `checkpoint: { version: "1", onRecovery: (thread, recovery) => { /* observe recovery */ } }` to `createBunHost` to enable persistence. The version identifies the compatible actor configuration returned by `actorFor`. Checkpointing is disabled when this option is absent; enabling it requires every actor served by that host to support checkpoints.
+
+Each thread's SQLite database contains an `actor_checkpoint` row with a persistent stream identity and the latest complete checkpoint. After a successful drive, the host atomically replaces that row when the published watermark changes. A failed write leaves the previous checkpoint available and fails the drive. A subsequent drive or restart can retry from the retained checkpoint and durable log.
+
+The host reports checkpoint acceptance or replay fallback through `onRecovery`. Malformed JSON, incompatible versions, invalid state, and watermarks beyond the log cause full replay. A fresh database receives a fresh stream identity. Keep the checkpoint and its event log together when copying a database.
+
+Checkpoint recovery skips prefix reduction in the actor reconciler. Host directory repair, graph scheduling, and alarm discovery still read history, so this does not eliminate all startup log reads. Cloudflare checkpoint persistence remains separate work.

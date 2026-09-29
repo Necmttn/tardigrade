@@ -3,7 +3,7 @@ import type { Event } from "../event"
 import type { InvocationRef } from "../interaction/invocation"
 import type { ActorMethodCancellationState } from "../interaction/state"
 import type { Projection } from "../projection/projection"
-import type { ErasedTransitionProjection, Transition } from "../transition"
+import type { ErasedTransitionProjection, ProjectionStateCodec, Transition } from "../transition"
 
 // Actor carries its runtime projection, validation guards, and durable key projection.
 export interface Actor<R = never> {
@@ -29,7 +29,9 @@ export interface ActorProjectionOutput<R = never> {
 }
 
 // ActorProjection derives the runtime behavior of an actor from its event stream.
-export interface ActorProjection<R = never> extends Projection<unknown, ActorProjectionOutput<R>> {}
+export interface ActorProjection<R = never> extends Projection<unknown, ActorProjectionOutput<R>> {
+  readonly checkpoint?: ProjectionStateCodec<unknown>
+}
 
 // ActorRuntimeOptions names the transition, guard, and control projections supplied to an actor runtime.
 export interface ActorRuntimeOptions<R = never> {

@@ -6,6 +6,7 @@ export * from "./composition/siblings"
 export * from "./refinement"
 export { interactionScope, type InteractionScope, type InteractionRequest, type InteractionOrigin, type ComponentInputs } from "../transition/interaction"
 
-export type { ChildHandle, ChildAdmission, ChildOf, ComponentChildren } from "./composition/children"
+export type { ChildSnapshot, ChildHandle, ChildAdmission, ChildOf, ComponentChildren } from "./composition/children"
 
 export type { ComponentReadonly } from "./readonly"
+export { supportsCheckpoint } from "./runtime"

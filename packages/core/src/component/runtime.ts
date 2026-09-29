@@ -1,3 +1,5 @@
+import { Schema, type Context } from "effect"
+import { ComponentCheckpoint } from "./checkpoint"
 import { validateView } from "./data"
 import { TRANSITION_COMPONENT_IDS, validateTransitions } from "../transition/transition"
 import { eraseTransitionProjection, type ErasedTransitionProjection } from "../transition/projection"
@@ -49,9 +51,17 @@ export const transitionProjectionOf = <V, R>(component: Component<V, R>): Erased
   return {
     [TRANSITION_COMPONENT_IDS]: component[TRANSITION_COMPONENT_IDS] ?? [],
     ...eraseTransitionProjection({
+      ...(machine.checkpoint === undefined ? {} : { checkpoint: {
+        encode: (state: unknown) => Schema.encodeSync(ComponentCheckpoint)(machine.checkpoint!.encode(state)),
+        decode: (state: Schema.Json, data?: Context.Context<never>) =>
+          machine.checkpoint!.decode(Schema.decodeSync(ComponentCheckpoint)(state), data)
+      } }),
       initial: machine.initial,
       step: machine.step,
       output: (state) => machine.output(state).transitions
     })
   }
 }
+
+// supportsCheckpoint reports whether a registered component can encode and restore its private state.
+export const supportsCheckpoint = (component: Component<unknown, unknown, never, unknown>): boolean => machineOf(component).checkpoint !== undefined

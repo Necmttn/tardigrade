@@ -1,6 +1,7 @@
+import { ActorCheckpoint, type ActorReconcilerOptions, type ActorRecovery } from "./checkpoint"
 import { eventAt } from "../event"
 import { concurrentTransition, validateTransitions } from "../transition/transition"
-import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
+import { Cause, Clock, Context, Effect, Option, Schema, Tracer } from "effect"
 import { actorRuntimeOf, type ActorSource } from "./actor"
 import { Self, InvocationScope, InvocationSuspended, ThreadAllocationScope } from "./context"
 export { Self } from "./context"
@@ -79,7 +80,9 @@ const advanceCache = <R>(a: Actor<R>, cache: ProjectionCache<R>, events: Readonl
     }
     if (a.projection !== undefined) actorState = a.projection.step(actorState, event)
   }
-  for (const event of events) cache.events.push(event)
+  if (a.projection === undefined && (a.cancellationOf !== undefined || a.cancellationResiduals !== undefined)) {
+    for (const event of events) cache.events.push(event)
+  }
   return {
     events: cache.events,
     recorded,
@@ -103,6 +106,22 @@ const projectionCache = <R>(a: Actor<R>, events: ReadonlyArray<Event>, data: Con
     cache.states.set(projection, projection.initial(data))
   }
   return advanceCache(a, cache, events)
+}
+
+const restoreCache = <R>(a: Actor<R>, options: ActorReconcilerOptions, head: number, data: Context.Context<never>): ProjectionCache<R> => {
+  const saved = Schema.decodeUnknownSync(ActorCheckpoint)(options.restore)
+  if (saved.actor !== options.checkpoint.actor || saved.version !== options.checkpoint.version || saved.stream !== options.checkpoint.stream) throw new Error("checkpoint identity mismatch")
+  if (!Number.isSafeInteger(saved.watermark) || saved.watermark < 0 || saved.watermark > head) throw new Error("checkpoint watermark is outside the log")
+  if (saved.projections.length !== a.projections.length || (saved.control !== undefined) !== (a.projection !== undefined)) throw new Error("checkpoint projection layout mismatch")
+  const restored: ProjectionCache<R> = {
+    events: [],
+    recorded: new Set(saved.recorded),
+    states: new Map(a.projections.map((projection, index) => [projection, projection.checkpoint!.decode(saved.projections[index]!, data)])),
+    actorState: a.projection?.checkpoint!.decode(saved.control!, data),
+    trigger: saved.trigger === undefined ? undefined : Tracer.externalSpan(saved.trigger),
+    watermark: saved.watermark
+  }
+  return restored
 }
 
 const interruptedBy = (signal: AbortSignal): Effect.Effect<never> =>
@@ -240,20 +259,47 @@ export const restingActor = <R>(a: ActorSource<R>, events: ReadonlyArray<Event>,
 // alarm re-drives blocked work (packages/host/tla/Driver.tla, EventuallyServed).
 export interface ActorReconciler<R> {
   readonly settle: Effect.Effect<void, never, EventLog | R>
+  readonly checkpoint: () => ActorCheckpoint
+  readonly recovery: () => ActorRecovery
   // isResting reports the result of the last completed settlement. A host must also account for work appended since that settlement.
   readonly isResting: () => boolean
 }
 
 // createActorReconciler retains a sound projection and advances it from the durable watermark.
 // One instance belongs to one actor activation (tla/projection/IncrementalProjection.tla, CacheSound).
-export const createActorReconciler = <R>(source: ActorSource<R>): ActorReconciler<R> => {
+export const createActorReconciler = <R>(source: ActorSource<R>, options?: ActorReconcilerOptions): ActorReconciler<R> => {
   const a = actorRuntimeOf(source)
+  if (options !== undefined) {
+    if (Object.values(options.checkpoint).some((value) => value.length === 0)) throw new Error("actor checkpoints require nonempty actor, version, and stream identities")
+    if (a.projections.some((projection) => projection.checkpoint === undefined)) throw new Error("actor checkpoints require codecs for every transition projection")
+    if (a.projection !== undefined && a.projection.checkpoint === undefined) throw new Error("actor checkpoints require a control projection codec")
+    if (a.projection === undefined && (a.cancellationOf !== undefined || a.cancellationResiduals !== undefined)) throw new Error("actor checkpoints cannot restore complete-log cancellation callbacks")
+    if (a.guardProjections?.some((guard) => !a.projections.includes(guard))) throw new Error("actor checkpoint guards must belong to the transition projections")
+  }
+  let recovery: ActorRecovery = { kind: "pending" }
   let cache: ProjectionCache<R> | undefined
   let resting = false
   const synchronize = (log: Context.Service.Shape<typeof EventLog>) => Effect.gen(function* () {
     if (cache === undefined) {
-      cache = projectionCache(a, yield* log.read, yield* Effect.context<never>())
-      return cache
+      const data = yield* Effect.context<never>()
+      if (options?.restore !== undefined && recovery.kind === "pending") {
+        const head = yield* log.head
+        cache = yield* Effect.try(() => restoreCache(a, options, head, data)).pipe(Effect.match({
+          onFailure: (error) => {
+            recovery = { kind: "replay", reason: String(error.cause) }
+            return undefined
+          },
+          onSuccess: (restored) => {
+            recovery = { kind: "checkpoint", watermark: restored.watermark }
+            return restored
+          }
+        }))
+      }
+      if (cache === undefined) {
+        cache = projectionCache(a, yield* log.read, data)
+        if (recovery.kind === "pending") recovery = { kind: "replay" }
+        return cache
+      }
     }
     cache = advanceCache(a, cache, yield* log.readFrom(cache.watermark))
     return cache
@@ -345,7 +391,21 @@ export const createActorReconciler = <R>(source: ActorSource<R>): ActorReconcile
       }
       if (!moved) return
     }
-  }), isResting: () => resting }
+  }), isResting: () => resting,
+  recovery: () => recovery,
+  checkpoint: () => {
+    if (options === undefined) throw new Error("actor checkpointing is not enabled")
+    if (cache === undefined) throw new Error("actor has no synchronized state")
+    const current = cache
+    return Schema.decodeSync(ActorCheckpoint)({
+      ...options.checkpoint,
+      watermark: current.watermark,
+      recorded: [...current.recorded],
+      projections: a.projections.map((projection) => projection.checkpoint!.encode(current.states.get(projection))),
+      ...(a.projection === undefined ? {} : { control: a.projection.checkpoint!.encode(current.actorState) }),
+      ...(current.trigger === undefined ? {} : { trigger: { traceId: current.trigger.traceId, spanId: current.trigger.spanId } })
+    })
+  } }
 }
 
 // settleActor attempts enabled transitions with a cursor scoped to this settlement.

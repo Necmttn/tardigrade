@@ -5,5 +5,6 @@ export {
   transitionProjection,
   type CompleteTransitionDerivation,
   type ErasedTransitionProjection,
+  type ProjectionStateCodec,
   type TransitionProjection
 } from "./projection"
