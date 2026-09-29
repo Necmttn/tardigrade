@@ -1,8 +1,9 @@
+import { ComponentCheckpoint } from "../component/checkpoint"
 import { Context } from "effect"
 import { machineOf } from "../component/runtime"
 import { CancellationRequested, CancellationInput, CancellationResult, type CancellationDispatched, type InvocationCancellation } from "./events"
 import { Cause, Clock, Effect, Schema } from "effect"
-import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { bindTransitionContext, transitionKeyOf } from "../transition/transition"
 import { replayProjection, replayState } from "@clavia/tardigrade-core/projection"
 import { EventLog } from "../log"
@@ -10,11 +11,11 @@ import { Self } from "../runtime/context"
 import type { ActorProjection } from "../runtime/definition"
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/keys"
-import { formatThreadAddress, parseThreadAddress } from "../transport/endpoint"
+import { formatThreadAddress, parseThreadAddress, ThreadAddress } from "../transport/endpoint"
 import { Router } from "../transport/router"
-import type { ThreadLineage } from "./relations"
+import { ChildPlacement, type ThreadLineage } from "./relations"
 import type { Component } from "@clavia/tardigrade-core/component"
-import { InvocationRef, invocationKey, sameInvocation, invocationCoordinateKey, type InvocationCoordinate } from "./invocation"
+import { InvocationRef, invocationKey, sameInvocation, invocationCoordinateKey, InvocationCoordinate } from "./invocation"
 import { actorMethod, type ActorMethodDeclaration, type ActorMethods } from "../actor/method"
 import { cancellationStateOf, initialMethodStates, reduceMethodStates, type ActorMethodCancellationState } from "./state"
 
@@ -283,6 +284,25 @@ interface ActorCancellationProjectionState {
   readonly recorded: ReadonlySet<string>
 }
 
+const cancellationBookkeeping = Schema.toCodecJson(Schema.Struct({
+  requests: Schema.Array(Schema.Struct({
+    event: RecordedEvent,
+    cancellation: Schema.Struct({ request: Schema.String, invocation: InvocationRef, cause: Schema.Literals(["requested", "deadline"]), reason: Schema.optionalKey(Schema.String), deadlineAt: Schema.optionalKey(Schema.Finite) }),
+    accepted: Schema.UndefinedOr(Schema.Literals(["running", "cancelled", "terminal"]))
+  })),
+  links: Schema.Array(Schema.Struct({
+    owner: RecordedEvent, parent: InvocationRef, reference: InvocationCoordinate,
+    lineage: Schema.optionalKey(Schema.Struct({ parent: ThreadAddress, depth: Schema.Finite, maxDepth: Schema.optionalKey(Schema.Finite), placement: Schema.optionalKey(ChildPlacement) }))
+  })),
+  settledCalls: Schema.ReadonlySet(Schema.String),
+  dispatchedCancellations: Schema.ReadonlySet(Schema.String),
+  recorded: Schema.ReadonlySet(Schema.String)
+}))
+const cancellationCheckpointState = Schema.Struct({
+  bookkeeping: Schema.Json,
+  methods: Schema.Array(Schema.Struct({ name: Schema.String, version: Schema.String, state: Schema.Json }))
+})
+
 const projectedChildSettled = (state: { readonly settledCalls: ReadonlySet<string>; readonly requests: ReadonlyArray<{ readonly cancellation: InvocationCancellation }> }, link: ProjectedChildLink): boolean =>
   state.settledCalls.has(invocationCoordinateKey(link.reference)) || state.requests.some(({ cancellation }) =>
     sameInvocation(cancellation.invocation, link.parent) &&
@@ -414,7 +434,38 @@ export const actorCancellationProjection = <R>(
     }
     return [...terminals, ...obligations]
   }
+  const entries = Object.entries(methods)
+  const machines = components.map(machineOf)
   return {
+    ...(entries.every(([, method]) => method.projection.state !== undefined) && machines.every(machine => machine.checkpoint !== undefined) ? { checkpoint: {
+      encode: (erased: unknown): ComponentCheckpoint => {
+        const state = erased as ActorCancellationProjectionState
+        return {
+          component: "actor.cancellation", version: "1",
+          state: {
+            bookkeeping: Schema.encodeSync(cancellationBookkeeping)(state),
+            methods: entries.map(([name, method]) => ({ name, version: method.projection.state!.version, state: Schema.encodeSync(method.projection.state!.schema)(state.methods.get(name)) }))
+          },
+          children: machines.map((machine, index) => machine.checkpoint!.encode(state.components[index]))
+        }
+      },
+      decode: (candidate: unknown, data?: Context.Context<never>): ActorCancellationProjectionState => {
+        const saved = Schema.decodeUnknownSync(ComponentCheckpoint)(candidate)
+        if (saved.component !== "actor.cancellation" || saved.version !== "1" || saved.children.length !== machines.length) throw new Error("Incompatible cancellation checkpoint")
+        const own = Schema.decodeUnknownSync(cancellationCheckpointState)(saved.state)
+        if (own.methods.length !== entries.length) throw new Error("Checkpoint method count differs")
+        const restoredMethods = entries.map(([name, method], index) => {
+          const value = own.methods[index]!
+          const codec = method.projection.state!
+          if (value.name !== name || value.version !== codec.version) throw new Error(`Incompatible checkpoint for method "${name}"`)
+          return [name, Schema.decodeSync(codec.schema)(value.state)] as const
+        })
+        return {
+          ...Schema.decodeSync(cancellationBookkeeping)(own.bookkeeping),
+          methods: new Map(restoredMethods), components: machines.map((machine, index) => machine.checkpoint!.decode(saved.children[index], data))
+        }
+      }
+    } } : {}),
     initial,
     step: (state, event) => reduce(state as ActorCancellationProjectionState, event),
     output: (erased) => {

@@ -48,6 +48,7 @@ export const transitionProjectionOf = <V, R>(component: Component<V, R>): Erased
   const machine = machineOf(component)
   return {
     [TRANSITION_COMPONENT_IDS]: component[TRANSITION_COMPONENT_IDS] ?? [],
+    ...(machine.checkpoint === undefined ? {} : { checkpoint: machine.checkpoint }),
     ...eraseTransitionProjection({
       initial: machine.initial,
       step: machine.step,

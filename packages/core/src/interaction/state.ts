@@ -1,3 +1,4 @@
+import type { ComponentStateSchema } from "../component/checkpoint"
 import type { Event } from "../event"
 import type { ActorMethods, ActorMethodDeclaration } from "../actor/method"
 import type { Projection } from "../projection/projection"
@@ -45,20 +46,28 @@ export interface ActorMethodView<Output = unknown> {
  *                         └──── method history remembered by the projection
  */
 export interface ActorMethodProjection<State, Output = unknown>
-  extends Projection<State, ActorMethodView<Output>> {}
+  extends Projection<State, ActorMethodView<Output>> {
+  readonly state?: ComponentStateSchema<State>
+}
 
 // ErasedActorMethodProjection preserves a method projection inside heterogeneous method tables.
 export interface ErasedActorMethodProjection
-  extends Projection<unknown, ActorMethodView<unknown>> {}
+  extends Projection<unknown, ActorMethodView<unknown>> {
+  readonly state?: ComponentStateSchema<unknown>
+}
 
 // eraseActorMethodProjection hides private method state from heterogeneous method tables.
 export const eraseActorMethodProjection = <State, Output>(
   projection: ActorMethodProjection<State, Output>
-): ErasedActorMethodProjection => ({
-  initial: projection.initial,
-  step: (state, event) => projection.step(state as State, event),
-  output: (state) => projection.output(state as State)
-})
+): ErasedActorMethodProjection => {
+  if (projection.state?.version.length === 0) throw new Error("method checkpoints require a nonempty version")
+  return {
+    ...(projection.state === undefined ? {} : { state: projection.state as ComponentStateSchema<unknown> }),
+    initial: projection.initial,
+    step: (state, event) => projection.step(state as State, event),
+    output: (state) => projection.output(state as State)
+  }
+}
 
 // initialMethodStates constructs private projection state for every method.
 export const initialMethodStates = (methods: ActorMethods): ReadonlyMap<string, unknown> =>

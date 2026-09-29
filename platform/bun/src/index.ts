@@ -5,3 +5,5 @@ export { threadSupervisor, requestThreadMethod, ThreadRequest, type ThreadSuperv
 export { objectStorageFromSqlite } from "./object-storage"
 export { RemoteBackup, RemoteBackupError, remoteBackupFromKeyValueStore, captureHostCheckpoint, restoreHostCheckpoint, DEFAULT_CHECKPOINT_POLICY, type HostCheckpoint, type CheckpointPolicy } from "./backup/index"
 export { DEFAULT_BUN_BACKUP_SCHEDULE, DEFAULT_BUN_BACKUP_RETRY, type BunBackupOptions, type BunBackupStatus } from "./backup/runner"
+
+export { DEFAULT_BUN_ACTOR_CHECKPOINTS } from "./host"

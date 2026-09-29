@@ -1,3 +1,4 @@
+import { ActorCheckpointStore } from "@clavia/tardigrade-host/checkpoint"
 import { threadExecutions } from "@clavia/tardigrade-host/execution"
 import { threadSupervisorDriver, threadSupervisorKeyOf } from "@clavia/tardigrade-host/thread-supervisor"
 import { hostThreadAllocator } from "@clavia/tardigrade-host/allocation"
@@ -62,7 +63,12 @@ export const bunThreadDatabasePath = (actorDatabase: string, thread: string): st
 export const BUN_CHILD_PLACEMENTS = ["colocated"] as const satisfies ReadonlyArray<ChildPlacement>
 export const DEFAULT_BUN_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
+// DEFAULT_BUN_ACTOR_CHECKPOINTS enables replaceable component checkpoints unless the host overrides checkpoints (host.test.ts).
+export const DEFAULT_BUN_ACTOR_CHECKPOINTS = true
+
 export type BunHostOptions<R> = {
+  // checkpoints enables one replaceable checkpoint per supported thread activation.
+  readonly checkpoints?: boolean
   readonly supervisor?: ThreadSupervisor
   readonly signal?: AbortSignal
   readonly allocation?: ThreadAllocationPolicy
@@ -127,6 +133,7 @@ interface BunThreadRuntime {
   readonly commits: PubSub.PubSub<number>
   readonly commitDispatcher?: CommitDispatcher
   readonly workspace: KeyValueStore.KeyValueStore
+  readonly checkpoints: typeof ActorCheckpointStore.Service
   readonly interruptions: ReturnType<typeof effectInterruptionRegistry>
   alarm?: { readonly deadlineAt: number; readonly handle: BunAlarmHandle }
 }
@@ -214,6 +221,13 @@ const threadMigrations = SqliteMigrator.fromRecord({
       event TEXT NOT NULL
     ) WITHOUT ROWID`
     yield* sql`CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL`
+  }),
+  "0003_actor_checkpoint": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE actor_checkpoint (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      checkpoint TEXT NOT NULL
+    )`
   })
 })
 
@@ -458,6 +472,13 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       store: { append, read, head, readFrom, readPage },
       commits,
       interruptions,
+      checkpoints: {
+        load: sql<{ checkpoint: string }>`SELECT checkpoint FROM actor_checkpoint WHERE singleton = 1`.pipe(
+          Effect.flatMap(rows => rows[0] === undefined ? Effect.void : Effect.try(() => JSON.parse(rows[0]!.checkpoint) as unknown))
+        ),
+        save: checkpoint => sql`INSERT INTO actor_checkpoint (singleton, checkpoint) VALUES (1, ${JSON.stringify(checkpoint)})
+          ON CONFLICT(singleton) DO UPDATE SET checkpoint = excluded.checkpoint`.pipe(Effect.asVoid)
+      },
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
       workspace
     }
@@ -580,6 +601,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
     const log = eventLogFrom(store)
     const ports = Layer.mergeAll(
+      (options.checkpoints ?? DEFAULT_BUN_ACTOR_CHECKPOINTS) ? Layer.succeed(ActorCheckpointStore, threadRuntime.checkpoints) : Layer.empty,
       Layer.succeed(EventLog, log), Layer.succeed(Alarm, alarmFromLog(log)), router,
       Layer.succeed(EffectInterruptions, threadRuntime.interruptions),
       Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),

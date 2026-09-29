@@ -1,3 +1,4 @@
+import type { ComponentMachine } from "../component/machine"
 import { transitionKeyOf, transitionComponentIds } from "../transition/transition"
 import type { Event } from "../event"
 import type { InvocationRef } from "../interaction/invocation"
@@ -29,7 +30,9 @@ export interface ActorProjectionOutput<R = never> {
 }
 
 // ActorProjection derives the runtime behavior of an actor from its event stream.
-export interface ActorProjection<R = never> extends Projection<unknown, ActorProjectionOutput<R>> {}
+export interface ActorProjection<R = never> extends Projection<unknown, ActorProjectionOutput<R>> {
+  readonly checkpoint?: ComponentMachine<unknown>["checkpoint"]
+}
 
 // ActorRuntimeOptions names the transition, guard, and control projections supplied to an actor runtime.
 export interface ActorRuntimeOptions<R = never> {

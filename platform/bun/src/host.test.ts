@@ -1,3 +1,7 @@
+import type { PackageDefinition } from "@clavia/tardigrade-code/package/definition"
+import { transitionProjectionOf } from "../../../packages/core/src/component/runtime"
+import { packageCalls } from "@clavia/tardigrade-code/package/calls"
+import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import fc from "fast-check"
 import { Database } from "bun:sqlite"
@@ -865,7 +869,8 @@ describe("the bun host", () => {
     ])
     expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "thread_identity" },
-      { migration_id: 2, name: "thread_events" }
+      { migration_id: 2, name: "thread_events" },
+      { migration_id: 3, name: "actor_checkpoint" }
     ])
     actor.close()
     thread.close()
@@ -1314,4 +1319,105 @@ test("scheduled failures remain observable through settled", async () => {
     host.schedule()
     await expect(host.settled()).rejects.toThrow("broken projection")
   } finally { await host.close() }
+})
+
+
+describe("actor checkpoints", () => {
+  const nestedPackage = (definition: PackageDefinition<never>) => component({
+    name: "package-parent", state: { version: "1", schema: Schema.Int }, children: packageCalls(definition),
+    initial: () => 0, step: state => state,
+    output: (_state, child) => child.output()
+  })
+  const readCheckpoint = (path: string, thread: string) => {
+    const db = new Database(bunThreadDatabasePath(path, thread))
+    try {
+      return db.query<{ checkpoint: string }, []>("SELECT checkpoint FROM actor_checkpoint").all()
+    } finally { db.close() }
+  }
+
+  test("a fresh host restores nested pending package work from one replaceable thread row", async () => {
+    const path = freshPath()
+    const parked = actorFromProjections({
+      transitions: [transitionProjectionOf(nestedPackage({ name: "notes", description: "Notes", methods: {
+        read: () => Effect.fail(new Park({ callId: "call", awaiting: "ready" }))
+      } }))], keyOf: () => undefined
+    })
+    const first = await createBunHost({ database: path, actorFor: () => parked })
+    try {
+      await first.seed("cp", [created("cp"),
+        { type: "MessageReceived", id: "turn", text: "read" },
+        { type: "PackageCalled", name: "notes.read", callId: "call", arguments: { text: "shoes" }, turn: "turn" }
+      ])
+      await first.wake("cp")
+      expect(readCheckpoint(path, "cp")).toHaveLength(1)
+      const saved = JSON.parse(readCheckpoint(path, "cp")[0]!.checkpoint)
+      expect(saved.watermark).toBe(4)
+      await first.seed("cp", [{ type: "ResponseReceived", id: "ready" }])
+    } finally { await first.close() }
+    let executions = 0
+    const projection = transitionProjectionOf(nestedPackage({ name: "notes", description: "Notes", methods: {
+      read: args => Effect.sync(() => { executions++; return args })
+    } }))
+    const restored = actorFromProjections({ transitions: [{ ...projection,
+      initial: () => { throw new Error("checkpoint prefix was replayed") }
+    }], keyOf: () => undefined })
+    const second = await createBunHost({ database: path, actorFor: () => restored })
+    try {
+      await second.wake("cp")
+      expect(executions).toBe(1)
+      expect((await second.read("cp")).at(-1)).toMatchObject({
+        type: "PackageReturned", result: { text: "shoes" },
+        transitionRef: { seq: 3, component: "package.notes", tag: "invoke" }
+      })
+      expect(readCheckpoint(path, "cp")).toHaveLength(1)
+      expect(JSON.parse(readCheckpoint(path, "cp")[0]!.checkpoint).watermark).toBe(6)
+      const db = new Database(bunThreadDatabasePath(path, "cp"))
+      try { db.exec("CREATE TRIGGER reject_checkpoint BEFORE UPDATE ON actor_checkpoint BEGIN SELECT RAISE(FAIL, 'checkpoint unavailable'); END") } finally { db.close() }
+      await second.seed("cp", [{ type: "PackageCalled", name: "notes.read", callId: "call-2", arguments: { text: "boots" }, turn: "turn" }])
+      await second.wake("cp")
+      expect(executions).toBe(2)
+      expect((await second.read("cp")).at(-1)).toMatchObject({ type: "PackageReturned", callId: "call-2" })
+      expect(JSON.parse(readCheckpoint(path, "cp")[0]!.checkpoint).watermark).toBe(6)
+    } finally { await second.close() }
+    const repair = new Database(bunThreadDatabasePath(path, "cp"))
+    try { repair.exec("DROP TRIGGER reject_checkpoint") } finally { repair.close() }
+    const third = await createBunHost({ database: path, actorFor: () => restored })
+    try {
+      await third.wake("cp")
+      expect(executions).toBe(2)
+      expect(readCheckpoint(path, "cp")).toHaveLength(1)
+      expect(JSON.parse(readCheckpoint(path, "cp")[0]!.checkpoint).watermark).toBe(8)
+    } finally { await third.close() }
+  })
+
+  test.each(["invalid JSON", "incompatible version", "disabled"])("%s uses full replay without repeating completed work", async mode => {
+    const path = freshPath()
+    let executions = 0
+    let initializations = 0
+    const projection = transitionProjectionOf(packageCalls({ name: "notes", description: "Notes", methods: {
+      read: () => Effect.sync(() => { executions++; return "ok" })
+    } }))
+    const actor = actorFromProjections({ transitions: [{ ...projection,
+      initial: data => { initializations++; return projection.initial(data) }
+    }], keyOf: () => undefined })
+    const first = await createBunHost({ database: path, actorFor: () => actor })
+    try {
+      await first.seed("cp", [created("cp"), { type: "PackageCalled", name: "notes.read", callId: "call", arguments: {} }])
+      await first.wake("cp")
+    } finally { await first.close() }
+    const saved = readCheckpoint(path, "cp")[0]!.checkpoint
+    const db = new Database(bunThreadDatabasePath(path, "cp"))
+    try {
+      db.query("UPDATE actor_checkpoint SET checkpoint = ?").run(mode === "invalid JSON" ? "{" : JSON.stringify({ ...JSON.parse(saved), version: 999 }))
+    } finally { db.close() }
+    initializations = 0
+    const second = await createBunHost({ database: path, actorFor: () => actor, ...(mode === "disabled" ? { checkpoints: false } : {}) })
+    try {
+      await second.wake("cp")
+      expect(initializations).toBeGreaterThan(0)
+      expect(executions).toBe(1)
+      expect(readCheckpoint(path, "cp")).toHaveLength(1)
+      expect(JSON.parse(readCheckpoint(path, "cp")[0]!.checkpoint).version).toBe(mode === "disabled" ? 999 : 1)
+    } finally { await second.close() }
+  })
 })

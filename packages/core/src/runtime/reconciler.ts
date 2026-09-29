@@ -1,6 +1,8 @@
+import { ActorCheckpoint } from "./checkpoint"
+export { ActorCheckpoint } from "./checkpoint"
 import { eventAt } from "../event"
 import { concurrentTransition, validateTransitions } from "../transition/transition"
-import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
+import { Cause, Clock, Context, Effect, Option, Schema, type Tracer } from "effect"
 import { actorRuntimeOf, type ActorSource } from "./actor"
 import { Self, InvocationScope, InvocationSuspended, ThreadAllocationScope } from "./context"
 export { Self } from "./context"
@@ -239,26 +241,50 @@ export const restingActor = <R>(a: ActorSource<R>, events: ReadonlyArray<Event>,
 // NoSuppressedCommit). A fire may commit, advance, block, or wedge; a wedge dies, and the platform
 // alarm re-drives blocked work (packages/host/tla/Driver.tla, EventuallyServed).
 export interface ActorReconciler<R> {
+  readonly supportsCheckpoints: boolean
   readonly settle: Effect.Effect<void, never, EventLog | R>
   // isResting reports the result of the last completed settlement. A host must also account for work appended since that settlement.
   readonly isResting: () => boolean
+  // checkpoint captures synchronized state without executing pending work; callers must restore it only against the same append-only log.
+  readonly checkpoint: Effect.Effect<ActorCheckpoint, never, EventLog | R>
 }
 
 // createActorReconciler retains a sound projection and advances it from the durable watermark.
 // One instance belongs to one actor activation (tla/projection/IncrementalProjection.tla, CacheSound).
-export const createActorReconciler = <R>(source: ActorSource<R>): ActorReconciler<R> => {
+export const createActorReconciler = <R>(source: ActorSource<R>, options: { readonly checkpoint?: unknown } = {}): ActorReconciler<R> => {
   const a = actorRuntimeOf(source)
   let cache: ProjectionCache<R> | undefined
   let resting = false
+  const supportsCheckpoints = (a.projection === undefined || a.projection.checkpoint !== undefined) && a.cancellationOf === undefined && a.cancellationResiduals === undefined && a.projections.every(projection => projection.checkpoint !== undefined)
+  const checkpointable = () => {
+    if (!supportsCheckpoints) {
+      throw new Error("Actor checkpoints require transition projections with complete component codecs and no legacy cancellation callbacks")
+    }
+  }
   const synchronize = (log: Context.Service.Shape<typeof EventLog>) => Effect.gen(function* () {
     if (cache === undefined) {
-      cache = projectionCache(a, yield* log.read, yield* Effect.context<never>())
+      const data = yield* Effect.context<never>()
+      if (options.checkpoint === undefined) {
+        cache = projectionCache(a, yield* log.read, data)
+      } else {
+        checkpointable()
+        const saved = yield* Schema.decodeUnknownEffect(ActorCheckpoint)(options.checkpoint).pipe(Effect.orDie)
+        if (saved.projections.length !== a.projections.length) throw new Error("Checkpoint projection count differs")
+        if (saved.watermark > (yield* log.head)) throw new Error("Checkpoint is ahead of the event log")
+        if ((saved.control === undefined) !== (a.projection === undefined)) throw new Error("Checkpoint control projection differs")
+        const actorState = a.projection?.checkpoint!.decode(saved.control, data)
+        const states = new Map(a.projections.map((projection, index) => [projection, projection.checkpoint!.decode(saved.projections[index], data)]))
+        cache = advanceCache(a, {
+          states, watermark: saved.watermark, recorded: new Set(saved.recorded),
+          events: [], actorState, trigger: undefined
+        }, yield* log.readFrom(saved.watermark))
+      }
       return cache
     }
     cache = advanceCache(a, cache, yield* log.readFrom(cache.watermark))
     return cache
   })
-  return { settle: Effect.gen(function* () {
+  return { supportsCheckpoints, settle: Effect.gen(function* () {
     resting = false
     const log = yield* EventLog
     while (true) {
@@ -345,7 +371,15 @@ export const createActorReconciler = <R>(source: ActorSource<R>): ActorReconcile
       }
       if (!moved) return
     }
-  }), isResting: () => resting }
+  }), isResting: () => resting, checkpoint: Effect.gen(function* () {
+    checkpointable()
+    const current = yield* synchronize(yield* EventLog)
+    return {
+      version: 1 as const, watermark: current.watermark, recorded: [...current.recorded],
+      projections: a.projections.map(projection => projection.checkpoint!.encode(current.states.get(projection))),
+      ...(a.projection === undefined ? {} : { control: a.projection.checkpoint!.encode(current.actorState) })
+    }
+  }) }
 }
 
 // settleActor attempts enabled transitions with a cursor scoped to this settlement.

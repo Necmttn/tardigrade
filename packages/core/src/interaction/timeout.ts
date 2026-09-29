@@ -1,5 +1,6 @@
+import { Schema } from "effect"
 import { type AlarmFired, type CallTimedOut } from "./events"
-import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { bindTransitionContext } from "../transition/transition"
 import type { Intent } from "@clavia/tardigrade-core/intent"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
@@ -7,7 +8,7 @@ import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/trans
 import type { KeyFragment } from "../log/index"
 import { component, type Component } from "@clavia/tardigrade-core/component"
 import { cancellationRequested, cancellationRequestedOf } from "./cancellation"
-import { type ActorInvocationContext, invocationKey, sameInvocation, type InvocationRef, invocationCoordinateKey } from "./invocation"
+import { type ActorInvocationContext, invocationKey, sameInvocation, InvocationRef, InvocationCoordinate, invocationCoordinateKey } from "./invocation"
 
 import { recordedDispatchOf, terminalInvocationRefOf, terminalStorageKey, type RecordedDispatch } from "./records-compat"
 
@@ -216,6 +217,18 @@ export interface MethodTimeoutProjectionState {
   readonly deadlines: ReadonlyMap<string, InvocationDeadline>
   readonly settledInvocations: ReadonlySet<string>
 }
+
+// MethodTimeoutState preserves deadline owners and crossed alarms (runtime/checkpoint.test.ts).
+export const MethodTimeoutState: Schema.Codec<MethodTimeoutProjectionState, Schema.Json> = Schema.toCodecJson(Schema.Struct({
+  dispatches: Schema.ReadonlyMap(Schema.String, Schema.Struct({
+    owner: RecordedEvent, reference: InvocationCoordinate,
+    terminal: Schema.Struct({ reference: Schema.optionalKey(InvocationCoordinate), epoch: Schema.optionalKey(Schema.Int), call: Schema.String, method: Schema.String, target: Schema.String, timeoutMs: Schema.Finite, deadlineAt: Schema.Finite })
+  })),
+  terminalCalls: Schema.ReadonlySet(Schema.String),
+  alarms: Schema.Array(Schema.StructWithRest(Schema.Struct({ type: Schema.Literal("AlarmFired"), scheduledFor: Schema.Finite, at: Schema.Finite, occurrence: Schema.optionalKey(Schema.Int) }), [Schema.Record(Schema.String, Schema.Unknown)])),
+  deadlines: Schema.ReadonlyMap(Schema.String, Schema.Struct({ owner: RecordedEvent, invocation: InvocationRef, deadlineAt: Schema.Finite })),
+  settledInvocations: Schema.ReadonlySet(Schema.String)
+}))
 
 // initialMethodTimeoutState constructs method deadline bookkeeping.
 export const initialMethodTimeoutState = (): MethodTimeoutProjectionState => ({

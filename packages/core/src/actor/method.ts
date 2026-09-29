@@ -1,3 +1,4 @@
+import type { ComponentStateSchema } from "../component/checkpoint"
 import type { TransitionContext } from "../transition/transition"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -42,6 +43,7 @@ export interface DurableMethodInput {
 
 export interface DurableInputProjection<State>
   extends Omit<Projection<State, ReadonlyArray<Transition<never>>>, "step"> {
+  readonly state?: ComponentStateSchema<State>
   readonly step: (state: State, event: Event, context: TransitionContext) => State
 }
 
@@ -52,6 +54,7 @@ export interface ErasedDurableInputProjection
 export const durableInputProjection = <State>(
   projection: DurableInputProjection<State>
 ): ErasedDurableInputProjection => ({
+  ...(projection.state === undefined ? {} : { state: projection.state as ComponentStateSchema<unknown> }),
   initial: projection.initial,
   step: (state, event, context) => projection.step(state as State, event, context),
   output: (state) => projection.output(state as State)

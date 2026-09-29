@@ -1,16 +1,16 @@
 import { type ActorMethodResponse, type ResponseDelivered, type ResponseReceived } from "./events"
 import { Clock, Effect, Schema } from "effect"
-import { eventAt, eventPositionOf, type Event } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { bindTransitionContext } from "../transition/transition"
 import { Self } from "../runtime/context"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/index"
 import { Router } from "../transport/router"
 import { reverseLink, type Link } from "../transport/link"
-import { formatThreadAddress, isThreadAddress, isProviderEndpoint, type ThreadAddress, type ProviderEndpoint } from "../transport/endpoint"
+import { formatThreadAddress, isThreadAddress, isProviderEndpoint, ThreadAddress, type ProviderEndpoint } from "../transport/endpoint"
 import { envelopeOf } from "./envelope"
-import { invocationResponseId, invocationKey, invocationCoordinateKey, type InvocationRef } from "./invocation"
-import { invocationDetachedOf, reduceReplyState, replyStateOf, type ReplyState } from "./detach"
+import { invocationResponseId, invocationKey, invocationCoordinateKey, InvocationRef } from "./invocation"
+import { InvocationDetached, invocationDetachedOf, reduceReplyState, replyStateOf, type ReplyState } from "./detach"
 import { acceptedCallOf, type AcceptedCall } from "./records-compat"
 import { providerResponseOf } from "./provider-response"
 import { initialMethodStates, reduceMethodStates, type ActorMethodState } from "./state"
@@ -114,6 +114,21 @@ export interface MethodResponseProjectionState {
   readonly calls: ReadonlyArray<AcceptedCall>
   readonly replies: ReadonlyMap<string, ReplyState>
 }
+
+// MethodResponseState stores accepted reply ownership and terminal delivery facts (runtime/checkpoint.test.ts).
+export const MethodResponseState: Schema.Codec<MethodResponseProjectionState, Schema.Json> = Schema.toCodecJson(Schema.Struct({
+  calls: Schema.Array(Schema.Struct({
+    owner: RecordedEvent, id: Schema.String, invocation: Schema.optionalKey(InvocationRef),
+    link: Schema.Struct({ source: Schema.Unknown, target: ThreadAddress })
+  })),
+  replies: Schema.ReadonlyMap(Schema.String, Schema.Union([
+    Schema.Struct({ status: Schema.Literal("pending") }),
+    Schema.Struct({ status: Schema.Literal("sent"), delivery: Schema.StructWithRest(Schema.Struct({
+      type: Schema.Literal("ResponseDelivered"), method: Schema.String, call: Schema.String, epoch: Schema.optionalKey(Schema.Int), at: Schema.Finite
+    }), [Schema.Record(Schema.String, Schema.Unknown)]) }),
+    Schema.Struct({ status: Schema.Literal("detached"), detachment: InvocationDetached })
+  ]))
+}))
 
 // initialMethodResponseState constructs response delivery bookkeeping.
 export const initialMethodResponseState = (): MethodResponseProjectionState => ({

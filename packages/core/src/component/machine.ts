@@ -1,3 +1,4 @@
+import type { ComponentCheckpoint, ComponentStateSchema } from "./checkpoint"
 import { Context } from "effect"
 import { createMachine } from "./composition/parent"
 import { registerComponent } from "./runtime"
@@ -29,7 +30,12 @@ export type { InvocationCancellation } from "../interaction/events"
  * Cancellation is an optional state query that derives cleanup transitions for one invocation.
  */
 export interface ComponentMachine<View, Requirements = never, Result = never, Interactions = unknown>
-  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {}
+  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {
+  readonly checkpoint?: {
+    readonly encode: (state: unknown) => ComponentCheckpoint
+    readonly decode: (saved: unknown, data?: Context.Context<never>) => unknown
+  }
+}
 
 // ComponentDependencies names data services bound when a component snapshot is initialized.
 export type ComponentDependencies = ReadonlyArray<Context.Key<unknown, unknown>>
@@ -40,6 +46,7 @@ type ChildRequirements<C extends ComponentChildren> = ComponentRequirements<C ex
 // ComponentDefinition is the typed author surface for a component machine.
 export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown, Input extends ComponentInputs = ComponentInputs> {
   readonly name: string
+  readonly state?: ComponentStateSchema<State>
   readonly children?: Children
   readonly input?: Input
   readonly dependencies?: Dependencies
@@ -63,6 +70,7 @@ export const component = <State, View, Requirements = never, Result = unknown, c
     )
   }
   if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
+  if (definition.state?.version.length === 0) throw new Error("component checkpoints require a nonempty version")
   const members: ReadonlyArray<Component<unknown, unknown>> = definition.children === undefined ? [] : Array.isArray(definition.children) ? [...definition.children] : [definition.children as Component<unknown, unknown>]
   const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...members])
   const fragments = members.flatMap((child) => child.keys === undefined ? [] : [child.keys])

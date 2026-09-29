@@ -1,3 +1,4 @@
+import type { ComponentMachine } from "../component/machine"
 import { Context } from "effect"
 import { TRANSITION_COMPONENT_IDS } from "./transition"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -22,6 +23,7 @@ export interface TransitionProjection<State, Requirements = never>
 
 // ErasedTransitionProjection preserves a transition projection in heterogeneous runtime collections.
 export interface ErasedTransitionProjection<Requirements = never> {
+  readonly checkpoint?: ComponentMachine<unknown>["checkpoint"]
   readonly [TRANSITION_COMPONENT_IDS]?: ReadonlyArray<string>
   readonly initial: (data?: Context.Context<never>) => unknown
   readonly step: {

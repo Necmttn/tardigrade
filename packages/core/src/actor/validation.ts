@@ -55,6 +55,7 @@ export const methodInputValidationComponents = (
       })
     : component({
         name: `actor.method-input.${name}`,
+        ...(projection.state === undefined ? {} : { state: projection.state }),
         initial: () => projection.initial(),
         step: projection.step,
         output: (state) => ({ view: undefined, transitions: projection.output(state) })
