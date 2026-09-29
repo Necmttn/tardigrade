@@ -53,18 +53,28 @@ test("runtime binds data once per reconciler activation", async () => {
 })
 
 
-test("checkpoint restore binds output dependencies without saving services or calling initial", () => {
-  const make = (restoring = false) => machineOf(component({
+test.each([false, true])("checkpoint restore rebinds dependencies without initial (nested: %s)", nested => {
+  const make = (restoring = false) => {
+    const leaf = component({
     name: "counter", dependencies: [Catalog] as const,
     state: { version: "1", schema: Schema.Finite },
     initial: () => { if (restoring) throw new Error("restore called initial"); return 0 },
     step: count => count + 1,
     output: (count, _children, [catalog]) => ({ view: { count, label: catalog.label }, transitions: [] })
-  }))
+    })
+    return machineOf(nested ? component({
+      name: "outer", state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
+      children: composeComponents("group", { empty: { count: 0, label: "" }, combine: (a, b) => ({ count: a.count + b.count, label: a.label + b.label }) }, [leaf]),
+      initial: () => { if (restoring) throw new Error("restore called initial") },
+      step: state => state,
+      output: (_state, child) => child.output()
+    }) : leaf)
+  }
   const original = make()
   const state = original.step(original.initial(Context.make(Catalog, { label: "first" })), { type: "Tick" })
   const saved = JSON.parse(JSON.stringify(original.checkpoint!.encode(state)))
-  expect(saved).toEqual({ component: "counter", version: "1", state: 1 })
+  if (!nested) expect(saved).toEqual({ component: "counter", version: "1", state: 1, children: [] })
+  expect(JSON.stringify(saved)).not.toContain("first")
   const fresh = make(true)
   expect(() => fresh.checkpoint!.decode(saved)).toThrow("test/Catalog")
   const restored = fresh.checkpoint!.decode(saved, Context.make(Catalog, { label: "second" }))

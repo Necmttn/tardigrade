@@ -335,13 +335,13 @@ const counter = component({
 })
 ```
 
-The internal component machine encodes private state with its component name and version. Decoding validates that identity and the state schema, then recomputes output without calling `initial`. Change the version when the stored representation or component behavior becomes incompatible. The codec must preserve every value needed by future reducers and outputs; declaring a schema does not establish replay equivalence by itself.
+The internal component machine encodes private state with its component name and version, plus ordered child checkpoints. Decoding validates every component identity, version, state schema, and child count. It restores children before rebuilding parent handles and output, without calling any initializer. Change the version when the stored representation or component behavior becomes incompatible. The codec must preserve every value needed by future reducers and outputs; declaring a schema does not establish replay equivalence by itself.
 
 Checkpoint-plus-tail equivalence is exercised in `packages/core/src/component/checkpoint.test.ts` through JSON serialization and fresh component construction at every generated log cut. Tail events retain their original log positions. The test compares encoded state, views, and pending intent keys and payloads with full replay.
 
-State declarations describe private state for both leaves and parents. The internal machine exposes checkpoint encoding and restore only for leaves; a parent declaration does not enable recovery of its children. Actor recovery and host persistence require separate support. A component holding live services, transition contexts, or executable callbacks in private state needs its state ownership investigated before declaring a codec.
+State declarations describe private state for both leaves and parents. A parent exposes checkpoint encoding and restore when its own state and every descendant support checkpoints. Sibling composition rebuilds its output tree, interactions, and reconciliation from restored children and retained reconciliation history. Child-admission preview positions and timestamps are encoded as framework data. Actor recovery and host persistence require separate support. A component holding live services, transition contexts, or executable callbacks in private state needs its state ownership investigated before declaring a codec.
 
-Built-in agent components declare versioned codecs for their private data. Event codecs retain original log positions alongside event payloads, since reply identities depend on those positions. Compaction and inference read model services from runtime data; permission and tool outputs rebuild contexts from retained events. These declarations do not yet enable restoring a composed agent.
+Built-in agent components declare versioned codecs for their private data. Event codecs retain original log positions alongside event payloads, since reply identities depend on those positions. Compaction and inference read model services from runtime data; permission and tool outputs rebuild contexts from retained events. The agent checkpoint tests restore an inference tree with governed tools and compare each remaining tail with replay.
 
 A custom `SystemProjection` can supply its own `state: { version, schema }`. A `budget` wrapper accepts `result: { version, schema }` for its user-defined rejection result; its state version includes that result version. Without the supplied codec, these generic components have no state declaration. The codec must cover every result returned by `onExhausted`.
 
@@ -368,4 +368,4 @@ The state audit covers agent components, message-input validation, and the code/
 | Code execution and packages | Dispatches, calls, completion identities, events | Sandbox and package implementations |
 | Alarm notifications | Events | Rebuilt firing contexts and configured interaction |
 
-Composition caches contain derived outputs and interaction functions. They belong to runtime reconstruction rather than the private-state schemas above. Core actor recovery, including the thread supervisor's retained transition contexts and actor-method projection codecs, remains outside this agent-component audit.
+Composition caches contain derived outputs and interaction functions. Restore rebuilds these caches from decoded child data. Core actor recovery, including the thread supervisor's retained transition contexts and actor-method projection codecs, remains outside this agent-component audit.

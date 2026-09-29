@@ -1,7 +1,8 @@
 import { machineOf, registerComponent } from "../runtime"
 import { TRANSITION_COMPONENT_IDS, transitionComponentIds, validateTransitions } from "../../transition/transition"
-import { Chunk } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { Chunk, Schema } from "effect"
+import { ComponentCheckpoint } from "../checkpoint"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { materializeProjection, type MaterializedProjectionState } from "@clavia/tardigrade-core/projection"
 import type { ViewAlgebra } from "@clavia/tardigrade-core/view"
 import { composeKeys } from "../../log/keys"
@@ -108,18 +109,16 @@ export function composeComponents<
     transitions: [...left.transitions, ...right.transitions]
   })
 
+  const rebuild = (children: ReadonlyArray<ChildState>, history: Chunk.Chunk<Event>): CompositionState => {
+    const root = buildOutputTree(children.map(child => child.value), { view: algebra.empty, transitions: [] }, combine)
+    return { children, root, history, output: outputFrom(root.output, history, children) }
+  }
+  const output = (state: CompositionState): PublicOutput => {
+    validateTransitions(state.output.transitions)
+    return state.output
+  }
   const projection = materializeProjection<CompositionState, PublicOutput>({
-    initial: (data) => {
-      const children = materialized.map((machine) => machine.initial(data))
-      const root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
-      const history = Chunk.empty<Event>()
-      return {
-        children,
-        root,
-        history,
-        output: outputFrom(root.output, history, children)
-      }
-    },
+    initial: data => rebuild(materialized.map(machine => machine.initial(data)), Chunk.empty<Event>()),
     step: (state, event) => {
       let children: Array<ChildState> | undefined
       const changed: Array<number> = []
@@ -149,12 +148,10 @@ export function composeComponents<
         output: outputFrom(root.output, history, children ?? state.children)
       }
     },
-    output: (state) => {
-      validateTransitions(state.output.transitions)
-      return state.output
-    }
+    output
   })
   type CachedState = MaterializedProjectionState<CompositionState, PublicOutput>
+  const historyCodec = Schema.toCodecJson(Schema.Chunk(RecordedEvent))
   return registerComponent({
     name,
     [TRANSITION_COMPONENT_IDS]: componentIds,
@@ -162,6 +159,27 @@ export function composeComponents<
     ...(keys === undefined ? {} : { keys }),
 
   }, {
+    ...(machines.every(machine => machine.checkpoint !== undefined) ? { checkpoint: {
+      encode: (snapshot: unknown): ComponentCheckpoint => {
+        const state = (snapshot as CachedState).state
+        return {
+          component: name, version: "1", state: Schema.encodeSync(historyCodec)(state.history),
+          children: machines.map((machine, index) => machine.checkpoint!.encode(state.children[index]!.state))
+        }
+      },
+      decode: (candidate: unknown, data): CachedState => {
+        const saved = Schema.decodeUnknownSync(ComponentCheckpoint)(candidate)
+        if (saved.component !== name || saved.version !== "1") throw new Error(`Incompatible checkpoint for component "${name}"`)
+        if (saved.children.length !== machines.length) throw new Error(`Checkpoint child count differs for component "${name}"`)
+        const history = Schema.decodeSync(historyCodec)(saved.state)
+        const children = machines.map((machine, index) => {
+          const state = machine.checkpoint!.decode(saved.children[index], data)
+          return { state, value: machine.output(state) }
+        })
+        const state = rebuild(children, history)
+        return { state, value: output(state) }
+      }
+    } } : {}),
     initial: projection.initial,
     step: (state, event) => projection.step(state as CachedState, event),
     output: (state) => projection.output(state as CachedState)

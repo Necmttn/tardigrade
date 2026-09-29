@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Effect, Schema } from "effect"
+import { Context, Effect, Schema } from "effect"
 import fc from "fast-check"
 import { type ComponentMachine } from "@clavia/tardigrade-core/actor"
 import { eventAt, type Event } from "@clavia/tardigrade-core/event"
@@ -14,8 +14,13 @@ import { permissionAuthority } from "./escalate/permission-authority"
 import { messages } from "./messages"
 import { nativeOutput } from "./native-output"
 import { system } from "./system"
+import { infer } from "./infer/index"
+import { tools } from "./tool/index"
+import { budget } from "./budget/index"
+import { permissions } from "./permissions/index"
+import { testModelData } from "../testing/model"
 
-const check = <V, R, Result, I>(make: () => ComponentMachine<V, R, Result, I>, events: ReadonlyArray<Event>) => {
+const check = <V, R, Result, I>(make: () => ComponentMachine<V, R, Result, I>, events: ReadonlyArray<Event>, data?: Context.Context<never>) => {
   const log = events.map((event, index) => eventAt(event, 100 + index))
   const original = make()
   const observe = (machine: ComponentMachine<V, R, Result, I>, state: unknown) => {
@@ -30,7 +35,7 @@ const check = <V, R, Result, I>(make: () => ComponentMachine<V, R, Result, I>, e
       }))
     }
   }
-  let replayed = original.initial()
+  let replayed = original.initial(data)
   const expected = [observe(original, replayed)]
   for (const event of log) {
     replayed = original.step(replayed, event)
@@ -39,7 +44,7 @@ const check = <V, R, Result, I>(make: () => ComponentMachine<V, R, Result, I>, e
   for (let cut = 0; cut <= log.length; cut++) {
     const saved = JSON.parse(JSON.stringify(expected[cut]!.state))
     const fresh = make()
-    let state = fresh.checkpoint!.decode(saved)
+    let state = fresh.checkpoint!.decode(saved, data)
     for (let end = cut; end <= log.length; end++) {
       expect(observe(fresh, state)).toEqual(expected[end]!)
       if (end < log.length) state = fresh.step(state, log[end]!)
@@ -113,4 +118,34 @@ test("event-backed checkpoints reject executable payloads", () => {
   const machine = machineOf(messages())
   const state = replayState(machine, [{ type: "Custom", callback: () => 1 }])
   expect(() => machine.checkpoint!.encode(state)).toThrow()
+})
+
+
+test("inference with governed tools restores pending calls and saved rejection results", () => {
+  let executed = 0
+  const make = () => machineOf(infer([
+    budget(permissions(tools({
+      spec: { name: "read", description: "read", inputSchema: {} },
+      run: () => Effect.sync(() => { executed++; return "contents" })
+    }), {
+      request: () => undefined,
+      onDenied: (reason, respond) => respond({ error: reason })
+    }), {
+      result: { version: "1", schema: Schema.toCodecJson(Schema.Unknown) },
+      limit: 1,
+      usage: view => view.calls.length,
+      onExhausted: reason => ({ error: reason })
+    }),
+    nativeOutput
+  ], { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } }))
+  check(make, [
+    { type: "MessageReceived", id: "turn", text: "read files", at: 1 },
+    { type: "ToolCalled", callId: "a", name: "read", arguments: { path: "a" }, turn: "turn", at: 2 },
+    { type: "ToolCalled", callId: "b", name: "read", arguments: { path: "b" }, turn: "turn", at: 3 },
+    { type: "BudgetGranted", callId: "more", amount: 3, turn: "turn", at: 4 },
+    { type: "ToolReturned", callId: "a", result: "contents", turn: "turn", at: 5, transitionRef: { seq: 101, component: "tools.dispatch", tag: "answer" } },
+    { type: "ToolReturned", callId: "b", result: { error: "Budget exhausted." }, turn: "turn", at: 6, transitionRef: { seq: 102, component: "tools.dispatch", tag: "answer" } },
+    { type: "TurnCompleted", turn: "turn", output: "done", at: 7 }
+  ], testModelData)
+  expect(executed).toBe(0)
 })

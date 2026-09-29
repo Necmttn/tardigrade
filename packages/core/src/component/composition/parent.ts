@@ -1,7 +1,7 @@
 import { ComponentCheckpoint } from "../checkpoint"
 import { Context, Option, Schema } from "effect"
 import { SuppliedInteractions, inputScopesOf, type InteractionScope } from "../../transition/interaction"
-import { eventPositionOf, type Event } from "../../event"
+import { eventPositionOf } from "../../event"
 import { machineOf } from "../runtime"
 import { bindTransitionContext, validateTransitions } from "../../transition/transition"
 import { materializeProjection, type MaterializedProjectionState } from "@clavia/tardigrade-core/projection"
@@ -17,11 +17,12 @@ export const createMachine = <State, View, Requirements, Result, Children extend
   identities: ReadonlyArray<string>
 ): ComponentMachine<View, Requirements | ComponentDataRequirements<Dependencies>, Result, Interactions> => {
   const identity = definition.name
-  const bind = (snapshots: ReadonlyArray<unknown>, event?: Event): ChildOf<Children> => {
-    const handles = members.map((member, index) => bindChild(machineOf(member), snapshots[index], event === undefined ? 0 : eventPositionOf(event) ?? 0, Number(event?.at ?? 0)))
+  const machines = members.map(machineOf)
+  const bind = (snapshots: ReadonlyArray<unknown>, binding: { readonly position: number; readonly at: number }): ChildOf<Children> => {
+    const handles = machines.map((machine, index) => bindChild(machine, snapshots[index], binding.position, binding.at))
     return (definition.children !== undefined && !Array.isArray(definition.children) ? handles[0] : Object.freeze(handles)) as ChildOf<Children>
   }
-  type Snapshot = { readonly own: State; readonly data: ComponentData<Dependencies>; readonly children: ReadonlyArray<unknown>; readonly handles: ChildOf<Children>; readonly scopes: ReadonlySet<InteractionScope> }
+  type Snapshot = { readonly binding: { readonly position: number; readonly at: number }; readonly own: State; readonly data: ComponentData<Dependencies>; readonly children: ReadonlyArray<unknown>; readonly handles: ChildOf<Children>; readonly scopes: ReadonlySet<InteractionScope> }
   const scopeContext = (data = Context.empty()) => {
     const inherited = Option.getOrElse(Context.getOption(data, SuppliedInteractions), () => new Set<InteractionScope>())
     const own = inputScopesOf(definition.input)
@@ -42,34 +43,42 @@ export const createMachine = <State, View, Requirements, Result, Children extend
   const projection = materializeProjection<Snapshot, ComponentOutput<View, Requirements, Result, Interactions>>({
     initial: (context) => {
       const { data, bindings, scopes } = scopeContext(context)
-      const children = members.map((member) => machineOf(member).initial(data))
-      const handles = bind(children)
-      return { own: definition.initial(handles, bindings), data: bindings, children, handles, scopes }
+      const children = machines.map(machine => machine.initial(data))
+      const binding = { position: 0, at: 0 }
+      const handles = bind(children, binding)
+      return { own: definition.initial(handles, bindings), data: bindings, children, handles, scopes, binding }
     },
     step: (state, event) => {
-      const children = members.map((member, index) => machineOf(member).step(state.children[index], event))
+      const children = machines.map((machine, index) => machine.step(state.children[index], event))
       const unchanged = children.every((child, index) => Object.is(child, state.children[index]))
-      const handles = unchanged ? state.handles : bind(children, event)
+      const binding = unchanged ? state.binding : { position: eventPositionOf(event) ?? 0, at: Number(event.at ?? 0) }
+      const handles = unchanged ? state.handles : bind(children, binding)
       const own = definition.step(state.own, event, bindTransitionContext(event, identity, state.scopes), handles, state.handles)
-      return Object.is(own, state.own) && unchanged ? state : { own, children, handles, data: state.data, scopes: state.scopes }
+      return Object.is(own, state.own) && unchanged ? state : { own, children, handles, data: state.data, scopes: state.scopes, binding }
     },
     output
   })
   type CachedState = MaterializedProjectionState<Snapshot, ComponentOutput<View, Requirements, Result, Interactions>>
-  const checkpoint = members.length === 0 ? definition.state : undefined
+  const checkpoint = machines.every(machine => machine.checkpoint !== undefined) ? definition.state : undefined
   return {
     ...(checkpoint === undefined ? {} : { checkpoint: {
       encode: (snapshot: unknown): ComponentCheckpoint => ({
         component: identity, version: checkpoint.version,
-        state: Schema.encodeSync(checkpoint.schema)((snapshot as CachedState).state.own)
+        state: Schema.encodeSync(checkpoint.schema)((snapshot as CachedState).state.own),
+        children: machines.map((machine, index) => machine.checkpoint!.encode((snapshot as CachedState).state.children[index])),
+        ...(members.length === 0 ? {} : { binding: (snapshot as CachedState).state.binding })
       }),
       decode: (candidate: unknown, data?: Context.Context<never>): CachedState => {
         const saved = Schema.decodeUnknownSync(ComponentCheckpoint)(candidate)
         if (saved.component !== identity || saved.version !== checkpoint.version) throw new Error(`Incompatible checkpoint for component "${identity}"`)
-        const { bindings, scopes } = scopeContext(data)
+        if (saved.children.length !== machines.length) throw new Error(`Checkpoint child count differs for component "${identity}"`)
+        if (machines.length > 0 && saved.binding === undefined) throw new Error(`Checkpoint is missing child binding coordinates for component "${identity}"`)
+        const runtime = scopeContext(data)
+        const own = Schema.decodeSync(checkpoint.schema)(saved.state)
+        const children = machines.map((machine, index) => machine.checkpoint!.decode(saved.children[index], runtime.data))
+        const binding = saved.binding ?? { position: 0, at: 0 }
         const state: Snapshot = {
-          data: bindings,
-          own: Schema.decodeSync(checkpoint.schema)(saved.state), children: [], handles: bind([]), scopes
+          own, children, binding, data: runtime.bindings, scopes: runtime.scopes, handles: bind(children, binding)
         }
         return { state, value: output(state) }
       }
