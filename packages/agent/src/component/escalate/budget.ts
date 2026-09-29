@@ -1,3 +1,7 @@
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { TurnProjectionSchema } from "@clavia/tardigrade-code/execution/turn-projection"
+import { checkpointFor } from "../checkpoint"
+import { Schema } from "effect"
 import { calls, component as defineComponent, type ThreadTarget } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
@@ -218,6 +222,7 @@ export const escalation = <R, Result>(
   const wrapped = defineComponent<State, AgentView & BudgetState, R | Router | Self, Result, typeof child, readonly [], ToolInteractions<R | Router | Self>>({
     children: child,
     name,
+    ...checkpointFor([child], Schema.toCodecJson(Schema.Struct({ turns: TurnProjectionSchema, log: Schema.Chunk(PositionedEvent) }))),
     initial: () => ({ turns: initialTurnProjection(), log: Chunk.empty<Event>() }),
     step: (state, event) => ({
       turns: reduceTurnProjection(state.turns, event),

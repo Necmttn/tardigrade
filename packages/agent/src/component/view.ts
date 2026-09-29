@@ -1,3 +1,4 @@
+import type { ToolCommand } from "./tool/command"
 import type { Component, ViewAlgebra } from "@clavia/tardigrade-core/actor"
 import type { Transition } from "@clavia/tardigrade-core/runtime"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -14,6 +15,7 @@ export interface AgentTool {
 
 // ToolOffer binds a tool description to work proposed by its owner.
 export interface ToolOffer<R = never> extends AgentTool {
+  readonly command?: ToolCommand
   readonly serve?: (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => ReadonlyArray<Transition<never, R>>
 }
 

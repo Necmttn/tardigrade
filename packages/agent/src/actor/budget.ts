@@ -52,6 +52,11 @@ export const requestBudgetMethod = actorMethod({
   output: BudgetDecision,
   event: ({ invocation, input, at }) => budgetRequestReceived({ id: invocation.id, ...input, at }),
   projection: {
+    checkpoint: { version: "1", schema: Schema.toCodecJson(Schema.Struct({
+      received: Schema.ReadonlySet(Schema.String),
+      decided: Schema.ReadonlyMap(Schema.String, Schema.Struct({ grant: Schema.optionalKey(Schema.Unknown), reason: Schema.optionalKey(Schema.Unknown) })),
+      failed: Schema.ReadonlyMap(Schema.String, Schema.String)
+    })) },
     initial: (): BudgetMethodProjection => ({ received: new Set(), decided: new Map(), failed: new Map() }),
     step: (state, event): BudgetMethodProjection => {
       const received = new Set(state.received)

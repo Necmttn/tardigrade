@@ -6,8 +6,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Schema } from "effect"
 import { actor, component } from "@clavia/tardigrade-core/actor"
-import { PositionedEvent, type Event } from "@clavia/tardigrade-core/event"
+import { PositionedEvent, type Event, eventAt } from "@clavia/tardigrade-core/event"
 import { createBunHost, bunThreadDatabasePath } from "./host"
+import { checkpointAgent } from "@clavia/tardigrade-agent/testing/checkpoint"
+import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
+import { testModelData } from "@clavia/tardigrade-agent/testing/model"
 
 describe("SQLite persistence", () => {
   const worker = (initialized: () => void, reduced: () => void) => actor({
@@ -77,4 +80,56 @@ describe("SQLite persistence", () => {
       }
     } finally { await rm(directory, { recursive: true, force: true }) }
   }, 20000)
+})
+
+describe("complete agent", () => {
+  test("a complete agent survives every control-state cut and a persisted restart", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "full-agent-checkpoint-"))
+    try {
+      for (const mode of ["native", "code"] as const) {
+        let tools = 0
+        let models = 0
+        const fixture = () => checkpointAgent({ mode, callsPerTurn: 2, limit: 1, onTool: () => { tools++ }, onModel: () => { models++ } })
+        const open = async () => {
+          const { definition, layers } = fixture()
+          return createBunHost({ database: join(directory, `${mode}.sqlite`), actorName: definition.name, actorFor: () => definition, layersFor: () => layers,
+            checkpoint: { version: "1" } })
+        }
+        const first = await open()
+        let history
+        try {
+          await first.allocate({ kind: "root", coordinate: { actor: "checkpoint-agent", instance: "default", thread: "root" } })
+          await first.commitRoot(first.self("root"), { type: "MessageReceived", id: "turn", text: "echo", at: 1 })
+          await first.drive()
+          history = await first.read("root")
+          expect(history.some((event) => event.type === "TurnCompleted")).toBe(true)
+        } finally { await first.close() }
+        const original = actorRuntimeOf(fixture().definition).projection!
+        let prefix = original.initial(testModelData)
+        for (let cut = 0; cut <= history.length; cut++) {
+          const restored = actorRuntimeOf(fixture().definition).projection!
+          let resumed = restored.checkpoint!.decode(JSON.parse(JSON.stringify(original.checkpoint!.encode(prefix))), testModelData)
+          let replayed = prefix
+          for (let i = cut; i < history.length; i++) {
+            const event = eventAt(history[i]!, i + 1)
+            resumed = restored.step(resumed, event)
+            replayed = original.step(replayed, event)
+            expect(restored.checkpoint!.encode(resumed)).toEqual(original.checkpoint!.encode(replayed))
+            expect(restored.output(resumed).continuations.map((work) => work.key)).toEqual(original.output(replayed).continuations.map((work) => work.key))
+          }
+          if (cut < history.length) prefix = original.step(prefix, eventAt(history[cut]!, cut + 1))
+        }
+        const before = { tools, models }
+        const reopened = await open()
+        try {
+          await reopened.recover()
+          expect({ tools, models }).toEqual(before)
+          expect(await reopened.read("root")).toEqual(history)
+          await reopened.commitRoot(reopened.self("root"), { type: "MessageReceived", id: "next", text: "again", at: 2 })
+          await reopened.drive()
+          expect((await reopened.read("root")).some((event) => event.type === "TurnCompleted" && event.turn === "next")).toBe(true)
+        } finally { await reopened.close() }
+      }
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  }, 30000)
 })

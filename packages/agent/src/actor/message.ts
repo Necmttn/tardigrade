@@ -1,16 +1,17 @@
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { TurnLifecycleSchema } from "@clavia/tardigrade-code/execution/turn-lifecycle"
 import { upcastError } from "../log/upcast"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/actor/method"
-import { type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import {
-  initialTurnProjection,
-  reduceTurnProjection,
+  initialTurnLifecycle,
+  reduceTurnLifecycle,
   turnEpochFrom,
   turnHeadFrom,
   turnTerminalAtFrom
-} from "@clavia/tardigrade-code/execution/turn-projection"
+} from "@clavia/tardigrade-code/execution/turn-lifecycle"
 import { ModelRef } from "../model/reference"
 import { AgentMessageReceived, MessageContent } from "../log/message"
 export { AgentMessageReceived } from "../log/message"
@@ -41,9 +42,16 @@ export type AgentMessageInput = typeof AgentMessageInput.Type
 const turnOf = (event: Event): string => String((event as { readonly id?: unknown }).id)
 
 
+// messageLifecycleEvent retains fields used by invocation status without message or execution payloads (message.test.ts).
+const messageLifecycleEvent = (event: Event): Event => Object.fromEntries(
+  ["type", "id", "turn", "epoch", "failedEpoch", "output", "error", "cause", "reason", "deadlineAt"]
+    .filter(key => event[key] !== undefined).map(key => [key, event[key]])
+) as Event
+
+
 interface MessageValidationState {
-  readonly turns: ReturnType<typeof initialTurnProjection>
-  readonly invalid: ReadonlyArray<{ readonly event: Event; readonly error: string; readonly context: TransitionContext }>
+  readonly turns: ReturnType<typeof initialTurnLifecycle>
+  readonly invalid: ReadonlyArray<{ readonly event: Event; readonly error: string }>
 }
 
 // agentMessageMethod exposes an agent turn as the generic message actor method.
@@ -67,8 +75,11 @@ export const agentMessageMethod = actorMethod({
       })
     },
     projection: durableInputProjection({
-      initial: (): MessageValidationState => ({ turns: initialTurnProjection(), invalid: [] }),
-      step: (state, event, context): MessageValidationState => {
+      checkpoint: { version: "2", schema: Schema.toCodecJson(Schema.Struct({
+        turns: TurnLifecycleSchema, invalid: Schema.Array(Schema.Struct({ event: PositionedEvent, error: Schema.String }))
+      })) },
+      initial: (): MessageValidationState => ({ turns: initialTurnLifecycle(), invalid: [] }),
+      step: (state, event): MessageValidationState => {
         let error: string | undefined
         if (event.type === "MessageReceived") {
           try {
@@ -78,14 +89,14 @@ export const agentMessageMethod = actorMethod({
           }
         }
         return {
-          turns: reduceTurnProjection(state.turns, event),
-          invalid: error === undefined ? state.invalid : [...state.invalid, { event, error, context }]
+          turns: reduceTurnLifecycle(state.turns, messageLifecycleEvent(event)),
+          invalid: error === undefined ? state.invalid : [...state.invalid, { event, error }]
         }
       },
-      output: (state) => state.invalid.map(({ event, error, context }) => {
+      output: (state, context) => state.invalid.map(({ event, error }) => {
         const turn = turnOf(event)
         const epoch = turnEpochFrom(state.turns, turn)
-        return context.intent("reject", (at) => turnFailed({
+        return context.transition(event).intent("reject", (at) => turnFailed({
           error: `invalid MessageReceived: ${error}; send a new corrected message`,
           cause: "message_invalid", attempts: 0, attemptKey: `${turn}/message`, turn,
           ...(epoch === 0 ? {} : { epoch }), at
@@ -103,8 +114,9 @@ export const agentMessageMethod = actorMethod({
     at
   }),
   projection: {
-    initial: initialTurnProjection,
-    step: reduceTurnProjection,
+    checkpoint: { version: "2", schema: Schema.toCodecJson(TurnLifecycleSchema) },
+    initial: initialTurnLifecycle,
+    step: (state, event) => reduceTurnLifecycle(state, messageLifecycleEvent(event)),
     output: (state) => ({
       currentEpoch: (id) => turnEpochFrom(state, id),
       invocationState: (invocation) => {

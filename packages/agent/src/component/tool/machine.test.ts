@@ -1,3 +1,4 @@
+import { toolHistoryOf, DEFAULT_TOOL_HISTORY } from "./machine"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import type { ToolOffer } from "../view"
 import { testModelData } from "../../testing/model"
@@ -195,4 +196,10 @@ test("native tools that ignore readEvents perform no log reads", async () => {
     }))
   ))
   expect(result).toMatchObject([{ type: "ToolReturned", result: { error: "failed" } }])
+})
+
+test("tool history mode exposes its default and rejects unknown modes", () => {
+  expect(toolHistoryOf()).toBe(DEFAULT_TOOL_HISTORY)
+  expect(toolHistoryOf("call")).toBe("call")
+  expect(() => toolHistoryOf("unknown" as "call")).toThrow("tool history must be turn or call")
 })

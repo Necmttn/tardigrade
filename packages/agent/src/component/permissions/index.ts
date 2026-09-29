@@ -1,5 +1,8 @@
-import { Chunk, HashMap, Option } from "effect"
-import type { TransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { PermissionFactsSchema, initialPermissionFacts, reducePermissionFacts, permissionCallEvidence, permissionDecision } from "./state"
+import { HashMap, Option, Schema } from "effect"
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { InvocationRef as InvocationRefSchema } from "@clavia/tardigrade-core/interaction/invocation"
+import { checkpointFor } from "../checkpoint"
 import { authorityTarget } from "../escalate/target"
 import { permissionRequestDecided, permissionRequestFailed } from "../../log/events"
 import type { PermissionAuthority } from "../escalate/permission-authority"
@@ -9,7 +12,7 @@ import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocati
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
-import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { invocationKey, decodeActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
 import { calls, component, type Component, type ChildOf, type ComponentReadonly, type ComponentWork, type ComponentOutput } from "@clavia/tardigrade-core/actor"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
@@ -51,7 +54,7 @@ export type PermissionsComponent<R = never, V extends object = AgentView, Result
   Component<V & PermissionState, R, Result, PermissionInteractions>
 
 interface Request {
-  readonly context: TransitionContext | undefined
+  readonly event: Event | undefined
   readonly subject: PermissionSubject | undefined
   readonly invocation: InvocationRef | undefined
 }
@@ -67,7 +70,8 @@ export const permissionEscalation = <R, V extends object, Result>(
     component({
       name: "permissions.escalation",
       children: child,
-      initial: () => undefined,
+      ...checkpointFor([child], Schema.Null),
+      initial: () => null,
       step: (state) => state,
 
       output: (_state, child): ComponentOutput<V & PermissionState, R | Router | Self, Result, PermissionInteractions> => {
@@ -82,19 +86,20 @@ export const permissions = <V extends object, R, Result, I>(
   child: Component<V, R, Result, I>,
   options: PermissionsOptions<NoInfer<V>, NoInfer<R>, NoInfer<Result>>
 ): PermissionsComponent<R | Router | Self, V, Result> => {
-  const classify = (requests: HashMap.HashMap<string, Request>, current: ChildOf<typeof child>, context?: TransitionContext) => {
+  const classify = (requests: HashMap.HashMap<string, Request>, current: ChildOf<typeof child>, event?: Event) => {
     const output = current.output()
     for (const work of output.transitions) {
       if (work.respond === undefined) continue
       const previous = Option.getOrUndefined(HashMap.get(requests, work.key))
       if (previous === undefined) {
+        const subject = options.request(work, output.view)
         requests = HashMap.set(requests, work.key, {
-          context,
-          subject: options.request(work, output.view),
+          event: subject === undefined ? undefined : event,
+          subject,
           invocation: work.invocation
         })
-      } else if (previous.context === undefined && context !== undefined) {
-        requests = HashMap.set(requests, work.key, { ...previous, context })
+      } else if (previous.subject !== undefined && previous.event === undefined && event !== undefined) {
+        requests = HashMap.set(requests, work.key, { ...previous, event })
       }
     }
     return requests
@@ -102,18 +107,24 @@ export const permissions = <V extends object, R, Result, I>(
   const pending = component({
     name: "permissions",
     children: child,
-    initial: child => ({ log: Chunk.empty<Event>(), requests: classify(HashMap.empty(), child) }),
-    step: (state, event, context, child) => ({
-      log: Chunk.append(state.log, event),
-      requests: classify(state.requests, child, context)
-    }),
+    ...checkpointFor([child], Schema.toCodecJson(Schema.Struct({
+      facts: PermissionFactsSchema, requests: Schema.HashMap(Schema.String, Schema.Struct({
+        event: Schema.UndefinedOr(PositionedEvent), invocation: Schema.UndefinedOr(InvocationRefSchema),
+        subject: Schema.UndefinedOr(Schema.Struct({ action: Schema.String, reason: Schema.String, resource: Schema.optionalKey(Schema.String), timeoutMs: Schema.optionalKey(Schema.Finite) }))
+      }))
+    })), "2"),
+    initial: child => ({ facts: initialPermissionFacts(), requests: classify(HashMap.empty(), child) }),
+    step: (state, event, _context, child) => {
+      const facts = reducePermissionFacts(state.facts, event)
+      const requests = HashMap.map(classify(state.requests, child, event), (request, key) =>
+        request.event === undefined || permissionDecision(facts, `permission/${key}`) === undefined ? request : { ...request, event: undefined })
+      return { facts, requests }
+    },
 
-    output: (state, child): ComponentOutput<V & PermissionState, R | Router | Self, Result, PermissionInteractions> => {
+    output: (state, child, _data, outputContext): ComponentOutput<V & PermissionState, R | Router | Self, Result, PermissionInteractions> => {
       const output = child.output()
-      const log = Chunk.toReadonlyArray(state.log)
       const decisionId = (key: string) => `permission/${key}`
-      const decisionOf = (key: string) => log.find(event => (event.type === "PermissionRequestDecided" || event.type === "PermissionRequestFailed") &&
-        event.callId === decisionId(key))
+      const decisionOf = (key: string) => permissionDecision(state.facts, decisionId(key))
       const statusOf = (key: string, request: Request): "pending" | "allowed" | "denied" => {
         if (request.subject === undefined)
           return "allowed"
@@ -146,21 +157,23 @@ export const permissions = <V extends object, R, Result, I>(
         interactions: {
           escalate: (authority) => output.transitions.flatMap((work): ReadonlyArray<Transition<never, Router | Self>> => {
             const request = Option.getOrUndefined(HashMap.get(state.requests, work.key))
-            if (request?.subject === undefined || request.context === undefined || decisionOf(work.key) !== undefined)
+            if (request?.subject === undefined || request.event === undefined || decisionOf(work.key) !== undefined)
               return []
-            const { subject, context, invocation } = request
+            const { subject, event, invocation } = request
+            const context = outputContext.transition(event)
             const id = decisionId(work.key)
             const turn = invocation?.id ?? ""
-            const target = authorityTarget(authority, log.find(event => event.type === "MessageReceived" && event.id === turn))
+            const target = authorityTarget(authority, Option.getOrUndefined(HashMap.get(state.facts.heads, turn)))
             const failed = (error: string) => context.intent(`failure/${work.key}`, at => permissionRequestFailed({ callId: id, error, at }))
             if (target === undefined)
               return [failed("No caller authority is available")]
-            const source = threadCreatedOf(log)?.address
+            const source = threadCreatedOf(state.facts.thread === undefined ? [] : [state.facts.thread])?.address
             if (source === undefined)
               throw new Error("permission escalation requires the actor thread identity")
-            const call = actorCall(log, {
-              id: JSON.stringify([formatThreadAddress(source), id]), target, method: "requestPermission",
-              ...(invocation === undefined ? {} : { context: actorInvocationContextOf(log, invocation) ?? { invocation } }),
+            const callId = JSON.stringify([formatThreadAddress(source), id])
+            const call = actorCall(permissionCallEvidence(state.facts, callId), {
+              id: callId, target, method: "requestPermission",
+              ...(invocation === undefined ? {} : { context: decodeActorInvocationContext(Option.getOrUndefined(HashMap.get(state.facts.contexts, invocationKey(invocation))) ?? { invocation }) }),
               input: {
                 request: work.key, turn, action: subject.action, reason: subject.reason,
                 ...(subject.resource === undefined ? {} : { resource: subject.resource })

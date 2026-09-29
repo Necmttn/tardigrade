@@ -1,6 +1,8 @@
+import { toolCommand } from "./command"
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
 import { toolComponent, type ToolComponent, toolConcurrencyOf, type ToolConcurrency } from "./machine"
-import { Clock, Effect } from "effect"
-import { component, legacyComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { Chunk, Clock, Effect, Schema } from "effect"
+import { component, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import type { CodeComponent } from "@clavia/tardigrade-code/package/definition"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { tools as packageTools, type ToolsOptions } from "./packages"
@@ -12,6 +14,7 @@ import type { ToolOffer } from "../view"
 
 // NativeTool describes one named tool whose effect returns its model-visible result.
 export interface NativeTool<R = never> {
+  readonly version?: string
   readonly concurrency?: ToolConcurrency
   readonly spec: ToolSpec
   readonly run: (
@@ -26,6 +29,9 @@ export interface NativeTool<R = never> {
   ) => Effect.Effect<unknown, never, R>
 }
 
+// DEFAULT_NATIVE_TOOL_VERSION identifies native implementations without an explicit version.
+export const DEFAULT_NATIVE_TOOL_VERSION = "1"
+
 const nativeTools = <R = never>(
   bindings: NativeTool<R> | ReadonlyArray<NativeTool<R>>,
   system: string | ((log: ReadonlyArray<Event>) => string) = "",
@@ -34,10 +40,9 @@ const nativeTools = <R = never>(
   const tools: ReadonlyArray<NativeTool<R>> = Array.isArray(bindings)
     ? (bindings as ReadonlyArray<NativeTool<R>>)
     : [bindings as NativeTool<R>]
-  const offers = tools.map((tool): ToolOffer<R> => ({
-    spec: tool.spec,
-    concurrency: toolConcurrencyOf(tool.concurrency),
-    serve: (call) => {
+  const implementations = tools.map((tool) => toolCommand({
+    name: tool.spec.name, version: tool.version ?? DEFAULT_NATIVE_TOOL_VERSION, schema: Schema.Null,
+    serve: (_input, call) => {
       const stamp = call.turn === undefined ? {} : { turn: call.turn }
       return [
         call.context.effect("answer", {
@@ -62,6 +67,9 @@ const nativeTools = <R = never>(
       ]
     }
   }))
+  const offers = tools.map((tool, index): ToolOffer<R> => ({
+    spec: tool.spec, concurrency: toolConcurrencyOf(tool.concurrency), command: implementations[index]!.command(null)
+  }))
   const derive = (instruction: string) => ({
     view: {
       system: [
@@ -77,14 +85,15 @@ const nativeTools = <R = never>(
   })
   const child =
     typeof system === "function"
-      ? legacyComponent({ name: options.name ?? "tools", derive: (log) => ({ ...derive(system(log)) }) })
+      ? component({ name: options.name ?? "tools", checkpoint: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(PositionedEvent)) }, initial: () => Chunk.empty<Event>(), step: (state, event) => Chunk.append(state, event), output: (state) => derive(system(Chunk.toReadonlyArray(state))) })
       : component({
           name: options.name ?? "tools",
+          checkpoint: { version: "1", schema: Schema.String },
           initial: () => system,
           step: (state: string) => state,
           output: (state) => ({ ...derive(state) })
         })
-  return toolComponent(child)
+  return toolComponent(child, { implementations })
 }
 
 // tools exposes native bindings or child package methods through the tool execution boundary.
@@ -121,3 +130,5 @@ export const tool: typeof nativeTools = nativeTools
 export const toolList: typeof nativeTools = nativeTools
 
 export type { ToolsOptions } from "./packages"
+
+export { toolCommand, type ToolCommand, type ToolImplementation } from "./command"

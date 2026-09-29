@@ -1,9 +1,11 @@
+import { Schema } from "effect"
+import { TurnLifecycleSchema } from "@clavia/tardigrade-code/execution/turn-lifecycle"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import {
-  initialTurnProjection,
-  reduceTurnProjection,
-  turnViewFrom
-} from "@clavia/tardigrade-code/execution/turn-projection"
+  initialTurnLifecycle,
+  reduceTurnLifecycle,
+  currentTurnFrom
+} from "@clavia/tardigrade-code/execution/turn-lifecycle"
 import { component } from "@clavia/tardigrade-core/actor"
 import { correctionAttemptsErrors, declaredOutputOf, type OutputFallback } from "../output/contract"
 import { defineOutputFallback, type OutputFallbackComponent } from "./infer/index"
@@ -45,32 +47,39 @@ export const repairFallback = (policy: Partial<RepairPolicy> = {}): OutputFallba
 export const outputSystemFor = (name: string, schema: unknown): string =>
   `Your final reply for this turn must be JSON conforming to the schema "${name}":\n${JSON.stringify(schema)}\nReply with that JSON alone: no prose around it, no code fence.`
 
+// declarationEvent retains lifecycle coordinates and the head's output declaration (turn.test.ts).
+const declarationEvent = (event: Event): Event => Object.fromEntries(
+  ["type", "id", "turn", "epoch", "failedEpoch", ...(event.type === "MessageReceived" ? ["output"] : [])]
+    .filter(key => event[key] !== undefined).map(key => [key, event[key]])
+) as Event
+
 // declaredSystem returns the fallback instruction for the current declared contract.
-const declaredSystem = (view: ReadonlyArray<Event>): { readonly system?: string } => {
-  const declared = declaredOutputOf(view)
+const declaredSystem = (head: Event | undefined): { readonly system?: string } => {
+  const declared = declaredOutputOf(head === undefined ? [] : [head])
   return declared.kind === "contract"
     ? { system: outputSystemFor(declared.contract.name, declared.contract.schema) }
     : {}
 }
 
+const outputFallback = (name: string, fallback: OutputFallback): OutputFallbackComponent => defineOutputFallback(component({
+  name,
+  checkpoint: { version: "2", schema: Schema.toCodecJson(TurnLifecycleSchema) },
+  initial: initialTurnLifecycle,
+  step: (state, event) => reduceTurnLifecycle(state, declarationEvent(event)),
+  output: (state) => ({
+    view: {
+      system: [],
+      tools: [],
+      context: [],
+      output: [{ component: name, kind: "fallback", fallback, ...declaredSystem(currentTurnFrom(state)?.head.event) }]
+    },
+    transitions: []
+  })
+}))
+
 // outputRepairFor derives the framework correction loop under a stated policy.
-export const outputRepairFor = (policy: Partial<RepairPolicy> = {}): OutputFallbackComponent => {
-  const fallback = repairFallback(policy)
-  return defineOutputFallback(component({
-    name: "output.repair",
-    initial: initialTurnProjection,
-    step: reduceTurnProjection,
-    output: (state) => ({
-      view: {
-        system: [],
-        tools: [],
-        context: [],
-        output: [{ component: "output.repair", kind: "fallback", fallback, ...declaredSystem(turnViewFrom(state)) }]
-      },
-      transitions: []
-    })
-  }))
-}
+export const outputRepairFor = (policy: Partial<RepairPolicy> = {}): OutputFallbackComponent =>
+  outputFallback("output.repair", repairFallback(policy))
 
 // outputRepair is the component under the default policy.
 export const outputRepair: OutputFallbackComponent = outputRepairFor()
@@ -79,17 +88,4 @@ export const outputRepair: OutputFallbackComponent = outputRepairFor()
 export const VALIDATE_ONCE_FALLBACK: OutputFallback = { kind: "local", name: "validate-once" }
 
 // outputValidateOnce contributes one local validation and its contract instruction (turn.test.ts, "the validate-once implementation").
-export const outputValidateOnce: OutputFallbackComponent = defineOutputFallback(component({
-  name: "output.validate-once",
-  initial: initialTurnProjection,
-  step: reduceTurnProjection,
-  output: (state) => ({
-    view: {
-      system: [],
-      tools: [],
-      context: [],
-      output: [{ component: "output.validate-once", kind: "fallback", fallback: VALIDATE_ONCE_FALLBACK, ...declaredSystem(turnViewFrom(state)) }]
-    },
-    transitions: []
-  })
-}))
+export const outputValidateOnce: OutputFallbackComponent = outputFallback("output.validate-once", VALIDATE_ONCE_FALLBACK)

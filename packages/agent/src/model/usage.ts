@@ -1,3 +1,4 @@
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
 import { HashMap, HashSet, Option, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf } from "@clavia/tardigrade-code/execution/turns"
@@ -276,19 +277,16 @@ const usagePartOf = (event: Event, carried: unknown, called: Event | undefined):
   return pricing === undefined ? usage : priced(usage, pricing)
 }
 
+export const UsageCostFoldSchema = Schema.Struct({
+  called: Schema.HashMap(Schema.String, PositionedEvent), unpriced: Schema.HashSet(Schema.String),
+  carried: Schema.Boolean, excluded: Schema.Boolean, parts: Schema.Int,
+  reportedCostUsd: Schema.UndefinedOr(Schema.Finite), estimatedCostUsd: Schema.UndefinedOr(Schema.Finite), stale: Schema.Boolean
+})
+
 // UsageCostFold is usageIn's reported and estimated cost over a served trajectory, folded one log event at a time.
 // Stale means a later event changed an earlier sum: a late ModelCalled prices an earlier response, or a head or
 // terminal carries usage and may move in or out of the trajectory. The caller then recomputes with usageIn.
-export interface UsageCostFold {
-  readonly called: HashMap.HashMap<string, Event>
-  readonly unpriced: HashSet.HashSet<string>
-  readonly carried: boolean
-  readonly excluded: boolean
-  readonly parts: number
-  readonly reportedCostUsd: number | undefined
-  readonly estimatedCostUsd: number | undefined
-  readonly stale: boolean
-}
+export type UsageCostFold = typeof UsageCostFoldSchema.Type
 
 export const emptyUsageCostFold: UsageCostFold = {
   called: HashMap.empty(),

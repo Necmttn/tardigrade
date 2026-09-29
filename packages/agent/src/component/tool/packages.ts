@@ -1,3 +1,5 @@
+import { checkpointFor, checkpointComposition } from "../checkpoint"
+import { Schema } from "effect"
 import { component, composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import type { KeyValueStore } from "effect/unstable/persistence"
@@ -20,14 +22,15 @@ export const tools = <const Cs extends ReadonlyArray<CodeComponent<unknown>>>(
   children: Cs,
   options: ToolsOptions = {}
 ): ToolComponent<ComponentRequirements<Cs[number]> | KeyValueStore.KeyValueStore> => {
-  const scope = composeComponents("tools.scope", CODE_VIEW_ALGEBRA, children)
+  const scope = composeComponents("tools.scope", CODE_VIEW_ALGEBRA, children, checkpointComposition(children))
   const concurrency = toolConcurrencyOf(options.concurrency)
   const callPolicy = packageCallPolicyOf(options.policy?.call)
   const spill = spillPolicyOf({ note: BARE_SPILL_NOTE, ...options.policy?.spill })
   const adapted = component({
     name: "tools",
     children: scope,
-    initial: () => undefined,
+    ...checkpointFor([scope], Schema.Null),
+    initial: () => null,
     step: state => state,
 
     output: (_state, child) => {

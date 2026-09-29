@@ -1,3 +1,7 @@
+import { toolCommand } from "../tool/command"
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { checkpointFor } from "../checkpoint"
+import { Schema } from "effect"
 import { toolComponent, type ToolComponent, toolConcurrencyOf, toolDispatchMatches, type ToolConcurrency, type Answer, type PendingCall } from "../tool/machine"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { Chunk } from "effect"
@@ -87,6 +91,11 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
   return [dispatch]
 }
 
+const codeCommand = toolCommand({
+  name: "agent.code", version: "1", schema: Schema.Null,
+  serve: (_input, call, log, answer) => serveCode(log, call, answer)
+})
+
 export interface CodeModeOptions {
   readonly toolConcurrency?: ToolConcurrency
   readonly policy?: Partial<CodePolicy>
@@ -127,6 +136,7 @@ export const codeMode = <
   const component = defineComponent({
     children: combined,
     name: "code",
+    ...checkpointFor([combined], Schema.toCodecJson(Schema.Chunk(PositionedEvent))),
     initial: () => Chunk.empty<Event>(),
     step: (state, event) => dynamicSystem === undefined ? state : Chunk.append(state, event),
 
@@ -147,12 +157,12 @@ export const codeMode = <
           tools: () => [{
             spec: executeTool(summaryMaxLength),
             concurrency: toolConcurrency,
-            serve: (call: PendingCall, current: ReadonlyArray<Event>, answer: Answer) => serveCode(current, call, answer)
+            command: codeCommand.command(null)
           }],
           cancel: (cancellation) => child.output().interactions?.cancel?.(cancellation) ?? []
         }
       }
     }
   })
-  return toolComponent({ ...component, keys: rootKeys(combined.keys) })
+  return toolComponent({ ...component, keys: rootKeys(combined.keys) }, { implementations: [codeCommand] })
 }

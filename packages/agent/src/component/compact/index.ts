@@ -1,3 +1,4 @@
+import { checkpointFor } from "../checkpoint"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import type { Context } from "effect"
 import { resolvedContextPolicyOf, checkpointOf, keepFromIndex, type ContextPolicy, type CompactionPolicy, DEFAULT_COMPACTION_POLICY } from "./context"
@@ -236,14 +237,15 @@ export const compact = <R>(
   }
   const triggerRatio = options.triggerRatio ?? options.fireRatio ?? DEFAULT_COMPACTION_POLICY.triggerRatio
   if (!Number.isFinite(triggerRatio) || triggerRatio <= 0 || triggerRatio >= 1) throw new Error("triggerRatio must be between 0 and 1")
-  return component<Context.Service.Shape<typeof ModelLock>, AgentView, R | LanguageModel.LanguageModel | Self, never, typeof child, readonly [typeof ModelLock]>({
+  return component<null, AgentView, R | LanguageModel.LanguageModel | Self, never, typeof child, readonly [typeof ModelLock]>({
     name: "compaction",
     children: child,
     dependencies: [ModelLock],
-    initial: (_children, [lock]) => lock,
+    ...checkpointFor([child], Schema.Null),
+    initial: () => null,
     step: (state) => state,
 
-    output: (lock, bound) => {
+    output: (_state, bound, [lock]) => {
       const output = bound.output()
       const conversation = output.view.messages?.[0]
       if (conversation === undefined || output.view.messages?.length !== 1)

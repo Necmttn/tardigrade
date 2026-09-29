@@ -1,7 +1,10 @@
+import { checkpointFor } from "../checkpoint"
+import { supportsCheckpoint, type ChildSnapshot } from "@clavia/tardigrade-core/component"
+import { BudgetLedgerSchema, initialBudgetLedger, reduceBudgetLedger, budgetTurnFrom, type BudgetLedger } from "./state"
 import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import type { Intent } from "@clavia/tardigrade-core/intent"
 import type { ComponentResult } from "@clavia/tardigrade-core/component"
-import { bindTransitionContext, transitionKeyOf } from "@clavia/tardigrade-core/transition/transition"
+import { EventIntentRecord, eventIntentRecordOf, restoreEventIntent, bindTransitionContext, transitionKeyOf } from "@clavia/tardigrade-core/transition/transition"
 import {
   component as defineComponent,
   type Component,
@@ -14,16 +17,10 @@ import {
 } from "@clavia/tardigrade-core/actor"
 import { budgetDenied, budgetExhausted, budgetGranted } from "../../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { turnEpochOf, turnHead } from "@clavia/tardigrade-code/execution/turns"
-import {
-  initialTurnProjection,
-  reduceTurnProjection,
-  turnViewFrom,
-  type TurnProjectionState
-} from "@clavia/tardigrade-code/execution/turn-projection"
-import { Chunk, HashSet } from "effect"
+import { turnHead } from "@clavia/tardigrade-code/execution/turns"
+import { HashSet, Schema } from "effect"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
-import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
+import { eventAt, eventPositionOf, PositionedEvent } from "@clavia/tardigrade-core/event"
 
 // BudgetPolicy sets the allowance for turns that declare no budget (budget.test.ts).
 export interface BudgetPolicy {
@@ -147,7 +144,8 @@ export const budget = <
       ? defineComponent({
           name: `${name}.children`,
           children: components as ReadonlyArray<AgentComponent<unknown>>,
-          initial: () => undefined,
+          ...checkpointFor(components as ReadonlyArray<AgentComponent<unknown>>, Schema.Null),
+          initial: () => null,
           step: state => state,
 
           output: (_state, children) => {
@@ -163,17 +161,17 @@ export const budget = <
         })
       : components
   ) as unknown as Component<ChildView, R, Result>
-  const measure = (childView: ComponentReadonly<ChildView>, trajectory: ReadonlyArray<Event>): BudgetState => {
+  const measure = (childView: ComponentReadonly<ChildView>, turn: ReturnType<typeof budgetTurnFrom>): BudgetState => {
     const limits = resolved.map(rule => {
       const used = rule.usage(childView)
       if (!Number.isFinite(used) || used < 0) throw new Error("budget usage must be a finite nonnegative number")
-      const limit = multiple ? rule.limit : budgetOf(trajectory, rule)
+      const limit = multiple ? rule.limit : turn.granted + (turn.initial ? 0 : initialAllowance(turn.head === undefined ? [] : [turn.head], rule.limit))
       return { limit, used, remaining: Math.max(0, limit - used) }
     })
     const exceeded = limits.find(rule => rule.used > rule.limit)
     return {
       ...(exceeded ?? limits[0]!),
-      phase: multiple ? exceeded === undefined ? "spending" : "exhausted" : budgetPhase(trajectory),
+      phase: multiple ? exceeded === undefined ? "spending" : "exhausted" : turn.phase,
       ...(multiple ? { limits } : {})
     }
   }
@@ -186,51 +184,50 @@ export const budget = <
   }
   const derived = (
     child: Child,
-    trajectory: ReadonlyArray<Event>,
-    log: ReadonlyArray<Event>,
+    facts: BudgetMachineState,
     refused: ReadonlyArray<Intent<never>>,
     admitted: HashSet.HashSet<string>
   ) => {
     const children = child.output()
-    const state = measure(children.view, trajectory)
+    const turn = budgetTurnFrom(facts.ledger)
+    const state = measure(children.view, turn)
     const { used, limit: allowance } = state
     const exhaustion = (event: Event, used: number, tag = "wall", invocation?: InvocationRef | null): Intent<never> => {
-      const turn = event.turn ?? turnHead(trajectory)?.id
+      const id = event.turn ?? turn.head?.id
       return bindTransitionContext(event, name).intent(tag, (at) => budgetExhausted({
         budget: allowance, used, at,
-        ...(turn === undefined ? {} : { turn: String(turn) })
+        ...(id === undefined ? {} : { turn: String(id) })
       }), invocation === undefined ? {} : { invocation })
     }
-    const position = eventPositionOf(log[log.length - 1] ?? { type: "Empty" }) ?? log.length
+    const position = facts.position
     const rejected: Array<Intent<never>> = []
     const selected = children.transitions.flatMap((transition): ReadonlyArray<ComponentWork<R, Result>> => {
       const completion = refuse(transition, state)
-      if (completion !== undefined && refused.some((refusal) => refusal.key === completion.key)) return []
+      if (completion !== undefined && HashSet.has(facts.refusedKeys, completion.key)) return []
       if (transition.respond === undefined || HashSet.has(admitted, completion?.key ?? transition.key)) return [transition]
       if (completion !== undefined) rejected.push(completion)
-      if (budgetPhase(trajectory) !== "spending") return []
-      const head = turnHead(trajectory)
+      if (turn.phase !== "spending") return []
+      const head = turn.head
       const invocation =
         transition.invocation ??
         (head === undefined
           ? undefined
-          : { method: "message", id: String(head.id), epoch: turnEpochOf(trajectory, String(head.id)) })
+          : { method: "message", id: String(head.id), epoch: turn.epoch })
       return [exhaustion(
         eventAt({ type: "BudgetCheck", ...(invocation === undefined ? {} : { turn: invocation.id }) }, position),
         used, `wall/${transition.key}`, invocation ?? null
       )]
     })
-    const recorded = new Set(log.map(transitionKeyOf).filter((key) => key !== undefined))
-    const refusals = refused.filter((transition) => !recorded.has(transition.key))
-    const wall = refusals.length > 0 && used > allowance && budgetPhase(trajectory) === "spending" && log.length > 0
-      ? [exhaustion(log[log.length - 1]!, used)] : []
-    const head = turnHead(trajectory)
+    const refusals = refused
+    const wall = refusals.length > 0 && used > allowance && turn.phase === "spending" && facts.last !== undefined
+      ? [exhaustion(facts.last, used)] : []
+    const head = turn.head
     const initial =
-      !multiple && head !== undefined && !trajectory.some((event) => event.type === "BudgetGranted" && event.initial === true)
+      !multiple && head !== undefined && !turn.initial
         ? [
             bindTransitionContext(head, name).intent("budget.initial", (at) =>
               budgetGranted({
-                amount: initialAllowance(trajectory, resolved[0]!.limit),
+                amount: initialAllowance([head], resolved[0]!.limit),
                 initial: true,
                 turn: String(head.id),
                 at
@@ -245,46 +242,82 @@ export const budget = <
   }
 
   type BudgetMachineState = {
-    readonly turns: TurnProjectionState
-    readonly log: Chunk.Chunk<Event>
-    readonly refused: ReadonlyArray<Intent<never>>
+    readonly ledger: BudgetLedger
+    readonly position: number
+    readonly last?: Event
+    readonly recorded: HashSet.HashSet<string>
+    readonly refusedKeys: HashSet.HashSet<string>
+    readonly refused: ReadonlyArray<
+      | { readonly kind: "events"; readonly key: string; readonly response: EventIntentRecord }
+      | { readonly kind: "child"; readonly snapshot: ChildSnapshot; readonly work: string; readonly key: string; readonly measured: BudgetState }
+    >
     // admitted preserves work accepted before later requests cross the limit (runtime/batches.test.ts).
     readonly admitted: HashSet.HashSet<string>
   }
   const classify = (state: BudgetMachineState, child: Child): BudgetMachineState => {
     const refused = [...state.refused]
     let admitted = state.admitted
+    let refusedKeys = state.refusedKeys
     const output = child.output()
-    const measured = measure(output.view, turnViewFrom(state.turns))
+    const measured = measure(output.view, budgetTurnFrom(state.ledger))
     const affordable = measured.used <= measured.limit
     for (const transition of output.transitions) {
       if (transition.respond === undefined) continue
       const completion = refuse(transition, measured)
       const key = completion?.key ?? transition.key
-      if (HashSet.has(admitted, key) || refused.some(refusal => refusal.key === key)) continue
+      if (HashSet.has(admitted, key) || HashSet.has(refusedKeys, key)) continue
       if (affordable) admitted = HashSet.add(admitted, key)
-      else if (completion !== undefined) refused.push(completion)
+      else if (completion !== undefined) {
+        refusedKeys = HashSet.add(refusedKeys, key)
+        if (HashSet.has(state.recorded, key)) continue
+        const response = eventIntentRecordOf(completion)
+        refused.push(response === undefined
+          ? { kind: "child", snapshot: child.retain(), work: transition.key, key, measured }
+          : { kind: "events", key, response })
+      }
     }
-    return { ...state, refused, admitted }
+    return { ...state, refused, admitted, refusedKeys }
   }
   const component = defineComponent<BudgetMachineState, ChildView & BudgetState, R, Result, typeof combined>({
     children: combined,
     name,
+    ...(supportsCheckpoint(combined) ? { checkpoint: (child: Child) => ({ version: "3", schema: Schema.toCodecJson(Schema.Struct({
+      ledger: BudgetLedgerSchema, position: Schema.Finite, last: Schema.optionalKey(PositionedEvent),
+      recorded: Schema.HashSet(Schema.String), refusedKeys: Schema.HashSet(Schema.String), admitted: Schema.HashSet(Schema.String),
+      refused: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literal("events"), key: Schema.String, response: EventIntentRecord }), Schema.Struct({
+        kind: Schema.Literal("child"), snapshot: child.snapshotSchema!, work: Schema.String, key: Schema.String,
+        measured: Schema.Struct({ limit: Schema.Finite, used: Schema.Finite, remaining: Schema.Finite,
+          phase: Schema.Literals(["spending", "exhausted", "denied"]),
+          limits: Schema.optionalKey(Schema.Array(Schema.Struct({ limit: Schema.Finite, used: Schema.Finite, remaining: Schema.Finite }))) })
+      })]))
+    })) }) } : {}),
     initial: child => classify({
-      turns: initialTurnProjection(),
-      log: Chunk.empty<Event>(),
+      ledger: initialBudgetLedger(), position: 0, recorded: HashSet.empty<string>(), refusedKeys: HashSet.empty<string>(),
       refused: [],
       admitted: HashSet.empty<string>()
     }, child),
-    step: (state, event, _context, child) => classify({
-      ...state,
-      turns: reduceTurnProjection(state.turns, event),
-      log: Chunk.append(state.log, event)
-    }, child),
+    step: (state, event, _context, child) => {
+      const key = transitionKeyOf(event)
+      return classify({
+        ...state,
+        ledger: reduceBudgetLedger(state.ledger, event),
+        position: eventPositionOf(event) ?? state.position + 1,
+        last: eventAt(Object.fromEntries(["type", "turn", "call", "invocationRef"]
+          .filter(key => event[key] !== undefined).map(key => [key, event[key]])) as Event, eventPositionOf(event) ?? state.position + 1),
+        recorded: key === undefined ? state.recorded : HashSet.add(state.recorded, key),
+        refused: key === undefined ? state.refused : state.refused.filter(refusal => refusal.key !== key)
+      }, child)
+    },
 
     output: (state, child) => {
       return {
-        ...derived(child, turnViewFrom(state.turns), Chunk.toReadonlyArray(state.log), state.refused, state.admitted),
+        ...derived(child, state, state.refused.map((record) => {
+          if (record.kind === "events") return restoreEventIntent(record.response)
+          const work = child.at(record.snapshot).output().transitions.find((work) => work.key === record.work)
+          const completion = work === undefined ? undefined : refuse(work, record.measured)
+          if (completion === undefined || completion.key !== record.key) throw new Error("budget refusal changed during reconstruction")
+          return completion
+        }), state.admitted),
         interactions: {
           cancel: (cancellation) => child.output().interactions?.cancel?.(cancellation) ?? []
         }

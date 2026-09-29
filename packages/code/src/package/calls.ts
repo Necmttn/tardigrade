@@ -1,4 +1,5 @@
-import { Chunk, Clock, Effect } from "effect"
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { Chunk, Clock, Effect, Schema } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { component, withResponse, type ComponentOutput } from "@clavia/tardigrade-core/actor"
 import { EventLog } from "@clavia/tardigrade-core/log"
@@ -35,6 +36,7 @@ const servingEvent = (event: Event): boolean => [
 // packageCalls owns method execution and responses at the committed request boundary (packages/agent/integration/package-permissions.test.ts).
 export const packageCalls = <R>(definition: PackageDefinition<R>) => component({
   name: `package.${definition.name}`,
+  checkpoint: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(PositionedEvent)) },
   initial: () => Chunk.empty<Event>(),
   step: (state, event) => {
     if (event.type === "TurnCompleted" || event.type === "TurnCancelled") {

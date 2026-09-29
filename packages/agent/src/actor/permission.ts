@@ -69,6 +69,11 @@ export const requestPermissionMethod = actorMethod({
   output: PermissionDecision,
   event: ({ invocation, input, at }) => permissionRequestReceived({ id: invocation.id, ...input, at }),
   projection: {
+    checkpoint: { version: "1", schema: Schema.toCodecJson(Schema.Struct({
+      received: Schema.ReadonlySet(Schema.String),
+      decided: Schema.ReadonlyMap(Schema.String, Schema.Struct({ granted: Schema.optionalKey(Schema.Unknown), reason: Schema.optionalKey(Schema.Unknown) })),
+      failed: Schema.ReadonlyMap(Schema.String, Schema.String)
+    })) },
     initial: (): PermissionMethodProjection => ({ received: new Set(), decided: new Map(), failed: new Map() }),
     step: reducePermissionMethod,
     output: (state) => ({

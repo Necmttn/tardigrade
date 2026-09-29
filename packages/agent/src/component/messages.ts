@@ -1,5 +1,5 @@
 import { component } from "@clavia/tardigrade-core/actor"
-import { transcriptProjection } from "../projection/transcript"
+import { transcriptProjection, TranscriptProjectionSchema } from "../projection/transcript"
 import type { ContextPolicy } from "./compact/context"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent } from "./view"
 
@@ -14,6 +14,7 @@ export const messages = (options: MessagesOptions = {}): AgentComponent<never> =
   const name = options.name ?? "messages"
   return component({
     name,
+    checkpoint: { version: "1", schema: TranscriptProjectionSchema },
     initial: () => projection.initial(),
     step: projection.step,
     output: (state) => ({

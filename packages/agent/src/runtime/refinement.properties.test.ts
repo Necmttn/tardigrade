@@ -245,9 +245,10 @@ describe("agent projection refinement", () => {
       const complete = inferenceFromHistory(INFER_OPTIONS, render, testModelLock())
       const incremental = inferenceMachine(INFER_OPTIONS)
       let rendered = renderProjection.initial(testModelData)
-      let state = incremental.initial(testModelLock())
+      let state = incremental.initial()
       for (let length = 0; length <= log.length; length++) {
-        expect(observableTransitions(incremental.output(state, { rendered: renderProjection.output(rendered) }) as ReadonlyArray<Transition<never, unknown>>))
+        expect(state).not.toHaveProperty("lock")
+        expect(observableTransitions(incremental.output(state, { rendered: renderProjection.output(rendered), lock: testModelLock() }) as ReadonlyArray<Transition<never, unknown>>))
           .toEqual(observableTransitions(complete(log.slice(0, length)) as ReadonlyArray<Transition<never, unknown>>))
         const event = log[length]
         if (event !== undefined) {

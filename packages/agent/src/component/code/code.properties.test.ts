@@ -6,8 +6,11 @@ import { testMachineOf } from "../../../fixtures/component"
 import { executionRefOf } from "@clavia/tardigrade-code/execution/events"
 import { codeMode } from "./index"
 
+// persistedResult models the JSON representation read from the durable event log.
+const persistedResult = fc.json().map(value => JSON.parse(value))
+
 const outcome = fc.oneof(
-  fc.record({ result: fc.jsonValue() }),
+  fc.record({ result: persistedResult }),
   fc.record({ error: fc.string() }),
   fc.record({ tmp: fc.string(), size: fc.nat(), preview: fc.string(), note: fc.string() })
 )

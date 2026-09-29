@@ -1,4 +1,5 @@
-import { Chunk, Effect } from "effect"
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { Chunk, Effect, Schema } from "effect"
 import { component, type InteractionRequest } from "@clavia/tardigrade-core/actor"
 import { Alarm } from "@clavia/tardigrade-core/alarm"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -92,11 +93,12 @@ export const alarm = (options: AlarmOptions): Package<Alarm> => {
   const notifications = component({
     name: "alarms.notifications",
     children: calls,
-    initial: () => Chunk.empty<RecordedEvent>(),
-    step: (state, event, context) => Chunk.append(state, { event, context }),
-    output: (state, child) => {
+    checkpoint: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(PositionedEvent)) },
+    initial: () => Chunk.empty<Event>(),
+    step: (state, event) => Chunk.append(state, event),
+    output: (state, child, _data, context) => {
       const output = child.output()
-      const due = pendingFiringsOf(Chunk.toReadonlyArray(state))
+      const due = pendingFiringsOf([...state].map(event => ({ event, context: context.transition(event) })))
       return {
         ...output,
         transitions: [...output.transitions, ...due.flatMap(({ request: { id, wakeAt, note }, context }) => {

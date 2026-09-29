@@ -1,22 +1,24 @@
+import { PositionedEvent } from "@clavia/tardigrade-core/event"
+import { TurnLifecycleSchema } from "./turn-lifecycle"
 import { OperationScope } from "@clavia/tardigrade-core/runtime/context"
 import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-core/transition/transition"
-import { Clock, Deferred, Effect, Fiber } from "effect"
+import { Clock, Deferred, Effect, Fiber, Schema } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-core/transition"
-import { component, composeComponents, type Component, type ComponentOutput, type ComponentResult, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { component, composeComponents, supportsCheckpoint, type Component, type ComponentOutput, type ComponentResult, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { CODE_VIEW_ALGEBRA, type CodeComponent, type CodeView } from "../package/definition"
 import type { PackageView } from "../package/definition"
 import { packageCallPolicyOf, type PackageCallPolicy, type CodePolicy } from "./policy"
 import { Sandbox, sandboxParked, sandboxReturned, type Bindings, type SandboxCall } from "../sandbox/service"
 import { eventEpochOf, turnHead, turnOf } from "./turns"
 import {
-  initialTurnProjection,
-  reduceTurnProjection,
+  initialTurnLifecycle,
+  reduceTurnLifecycle,
   turnTerminalFrom,
-  type TurnProjectionState
-} from "./turn-projection"
+  type TurnLifecycleState
+} from "./turn-lifecycle"
 import {
   BARE_SPILL_NOTE,
   hydrate,
@@ -179,12 +181,19 @@ const executeRecorded = (
   }).pipe(Effect.scoped)
 
 interface CodeState {
-  readonly turns: TurnProjectionState
+  readonly turns: TurnLifecycleState
   readonly dispatches: ReadonlyMap<string, Event>
+  readonly owners: ReadonlySet<string>
   readonly settled: ReadonlySet<string>
   readonly calls: ReadonlyMap<string, { readonly execId: string }>
   readonly returned: ReadonlySet<string>
 }
+
+const CodeStateSchema = Schema.toCodecJson(Schema.Struct({
+  turns: TurnLifecycleSchema, owners: Schema.ReadonlySet(Schema.String), dispatches: Schema.ReadonlyMap(Schema.String, PositionedEvent),
+  settled: Schema.ReadonlySet(Schema.String), calls: Schema.ReadonlyMap(Schema.String, Schema.Struct({ execId: Schema.String })),
+  returned: Schema.ReadonlySet(Schema.String)
+}))
 
 const codeExecutionProjection = (
   policy: Partial<CodePolicy>,
@@ -214,41 +223,54 @@ const codeExecutionProjection = (
     note: policy.spill?.note ?? (workspace === undefined ? BARE_SPILL_NOTE : WORKSPACE_SPILL_NOTE)
   })
   const callPolicy = packageCallPolicyOf(policy.call)
-  const ownerOf = (dispatches: ReadonlyMap<string, Event>, callId: string): string => {
+  const ownerOf = (owners: ReadonlySet<string>, callId: string): string => {
     let owner = ""
-    for (const execId of dispatches.keys()) {
+    for (const execId of owners) {
       if (callId.startsWith(`${execId}.`) && execId.length > owner.length) owner = execId
     }
     return owner
   }
   return transitionProjection({
     initial: (): CodeState => ({
-      turns: initialTurnProjection(),
+      turns: initialTurnLifecycle(),
       dispatches: new Map(),
+      owners: new Set(),
       settled: new Set(),
       calls: new Map(),
       returned: new Set()
     }),
     step: (state, event): CodeState => {
       const dispatches = new Map(state.dispatches)
+      const owners = new Set(state.owners)
       const settled = new Set(state.settled)
       const calls = new Map(state.calls)
       const returned = new Set(state.returned)
       const value = event as { readonly execId?: unknown; readonly callId?: unknown; readonly awaiting?: unknown; readonly id?: unknown; readonly at?: unknown }
       if (event.type === "CodeDispatched") {
         const execId = executionKeyOf(event)
+        owners.add(execId)
         const prior = dispatches.get(execId) as { readonly at?: unknown } | undefined
-        if (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0)) dispatches.set(execId, event)
+        if (!settled.has(execId) && (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0))) dispatches.set(execId, event)
       }
-      if (event.type === "CodeSettled") settled.add(executionKeyOf(event))
+      if (event.type === "CodeSettled") {
+        const execId = executionKeyOf(event)
+        settled.add(execId)
+        dispatches.delete(execId)
+        for (const [callId, call] of calls) if (call.execId === execId) calls.delete(callId)
+      }
       if (event.type === "PackageCalled") {
         const callId = packageKeyOf(event)
-        calls.set(callId, { execId: (executionRefOf(event) === undefined ? ownerOf(dispatches, callId) : executionKeyOf(event)) })
+        const execId = executionRefOf(event) === undefined ? ownerOf(owners, callId) : executionKeyOf(event)
+        if (!returned.has(callId) && !settled.has(execId)) calls.set(callId, { execId })
       }
-      if (event.type === "PackageReturned") returned.add(packageKeyOf(event))
+      if (event.type === "PackageReturned") {
+        returned.add(packageKeyOf(event))
+        calls.delete(packageKeyOf(event))
+      }
       return {
-        turns: reduceTurnProjection(state.turns, event),
-        dispatches,
+        turns: event.type === "MessageReceived" ? state.turns : reduceTurnLifecycle(state.turns,
+          Object.fromEntries(["type", "turn", "epoch", "failedEpoch"].filter(key => event[key] !== undefined).map(key => [key, event[key]])) as Event),
+        dispatches, owners,
         settled,
         calls,
         returned
@@ -293,11 +315,12 @@ export const codeExecution = <const Cs extends ReadonlyArray<CodeComponent<unkno
   children: Cs,
   policy: Partial<CodePolicy> = {}
 ): Component<CodeView, KeyValueStore.KeyValueStore | ComponentRequirements<Cs[number]>, ComponentResult<Cs[number]>> => {
-  const scope = composeComponents("code.scope", CODE_VIEW_ALGEBRA, children)
+  const scope = composeComponents("code.scope", CODE_VIEW_ALGEBRA, children, children.every(supportsCheckpoint) ? { checkpoint: { version: "1" } } : {})
   const empty = codeExecutionProjection(policy, [])
   return component({
     name: "code.execution",
     children: scope,
+    ...(supportsCheckpoint(scope) ? { checkpoint: { version: "2", schema: CodeStateSchema } } : {}),
     initial: child => {
       codeExecutionProjection(policy, child.output().view.packages)
       return empty.initial()

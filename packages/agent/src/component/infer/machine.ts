@@ -565,15 +565,13 @@ export const inferenceFromHistory = <R = never>(policy: Partial<InferPolicy>, re
 }
 
 interface IncrementalInferState {
-  readonly lock: Context.Service.Shape<typeof ModelLock>
   readonly turns: TurnProjectionState
   readonly modelFailures: HashMap.HashMap<string, number>
 }
 
-// inferenceMachine tracks turn lifecycle while its caller supplies the rendered child output (runtime/refinement.properties.test.ts).
+// inferenceMachine tracks turn lifecycle while its caller supplies rendered output and runtime model resolution (runtime/refinement.properties.test.ts).
 export const inferenceMachine = (policy: Partial<InferPolicy>) => ({
-  initial: (lock: Context.Service.Shape<typeof ModelLock>): IncrementalInferState => ({
-    lock,
+  initial: (): IncrementalInferState => ({
     turns: initialTurnProjection(),
     modelFailures: HashMap.empty()
   }),
@@ -587,7 +585,7 @@ export const inferenceMachine = (policy: Partial<InferPolicy>) => ({
       modelFailures: failed ? HashMap.set(state.modelFailures, turn, count + 1) : state.modelFailures
     }
   },
-  output: <R>(state: IncrementalInferState, render: Pick<InferDerivation<R>, "rendered">) => {
+  output: <R>(state: IncrementalInferState, render: Pick<InferDerivation<R>, "rendered" | "lock">) => {
     const slice = turnViewFrom(state.turns)
     const turn = String((slice[0] as { readonly id?: unknown } | undefined)?.id ?? "")
     return inferTransitionsFor(policy, {
@@ -595,8 +593,7 @@ export const inferenceMachine = (policy: Partial<InferPolicy>) => ({
       epoch: turnEpochFrom(state.turns, turn),
       trajectory: () => trajectoryFrom(state.turns),
       modelFailures: Option.getOrElse(HashMap.get(state.modelFailures, turn), () => 0),
-      ...render,
-      lock: state.lock
+      ...render
     })
   }
 })

@@ -1,10 +1,13 @@
+import { Schema } from "effect"
+import { TurnProjectionSchema } from "@clavia/tardigrade-code/execution/turn-projection"
+import { checkpointFor, checkpointComposition } from "../checkpoint"
 import { checkedTools, renderView } from "./view"
 export type { Rendered } from "./view"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { messages } from "../messages"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
 import { turnViewFrom, trajectoryFrom } from "@clavia/tardigrade-code/execution/turn-projection"
-import { emptyUsageCostFold, foldUsageCost, usageCostOf, usageIn } from "../../model/usage"
+import { UsageCostFoldSchema, emptyUsageCostFold, foldUsageCost, usageCostOf, usageIn } from "../../model/usage"
 export { AGENT_VIEW_ALGEBRA, type AgentView, type AgentComponent, type AgentTool, type ContextFragment, type NativeOutputFragment, type FallbackOutputFragment, type OutputFragment } from "../view"
 import { composeComponents, handles, interactionScope, component as defineComponent, type InteractionRequest, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
@@ -33,7 +36,8 @@ export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFal
   const wrapped = defineComponent({
     name: `${component.name}.fallback`,
     children: component,
-    initial: () => undefined,
+    ...checkpointFor([component], Schema.Null),
+    initial: () => null,
     step: state => state,
 
     output: (_state, child) => {
@@ -103,25 +107,30 @@ export const infer = <
     }))
   }
   const children = typeof components === "function" ? components(inputs) : components
-  const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, children) as AgentComponent<ComponentR>
+  const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, children, checkpointComposition(children)) as AgentComponent<ComponentR>
   const { models: rawModels, toolConcurrency, ...policy } = options
   toolConcurrencyOf(toolConcurrency)
   const routing = routeTools(combined,
     (view) => checkedTools(view.tools).map(({ spec, concurrency }) => ({ spec, ...(concurrency === undefined ? {} : { concurrency }) })),
-    toolConcurrency)
+    toolConcurrency, checkpointComposition([combined]).checkpoint, "call")
   const inference = inferenceMachine({ ...policy, models: modelPolicyOverrideOf(rawModels) })
   const root = defineComponent({
     children: [routing, messages({ name: "infer.messages" })] as const,
     name: "infer",
     input: inputs,
     dependencies: [ModelLock] as const,
-    initial: (_children, [lock]) => ({ ...inference.initial(lock), lifetime: emptyUsageCostFold }),
+    ...checkpointFor([routing], Schema.toCodecJson(Schema.Struct({
+      turns: TurnProjectionSchema, modelFailures: Schema.HashMap(Schema.String, Schema.Int),
+      lifetime: UsageCostFoldSchema
+    }))),
+    initial: () => ({ ...inference.initial(), lifetime: emptyUsageCostFold }),
     // step folds the lifetime cost once per event; output reads the trajectory only when the fold is stale (usage.test.ts, "foldUsageCost").
     step: (state, event) => ({ ...inference.step(state, event), lifetime: foldUsageCost(state.lifetime, event) }),
 
-    output: (state, [child, fallback]) => {
+    output: (state, [child, fallback], [lock]) => {
       const children = child.output()
       const inferred = inference.output(state, {
+        lock,
         rendered: renderView(children.view, toolConcurrency, fallback.output().view.messages?.[0], children.transitions)
       })
       const compactions = new Set(children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? [])
