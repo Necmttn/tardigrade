@@ -21,7 +21,7 @@ export default defineActor(
       system(actorInstructions),
       escalate(
         budget(codeMode([fetch(), agents(), workspace()]), {
-          onExhausted: (reason, settle) => settle({ error: reason }),
+          onExhausted: (reason) => ({ error: reason }),
           usage: (observation) => observation.calls.length,
           rejectionMessage: "Tool budget reached. Answer now with your best result."
         }),

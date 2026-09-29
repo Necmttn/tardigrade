@@ -17,6 +17,7 @@ export interface ToolOffer<R = never> extends AgentTool {
   readonly serve?: (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => ReadonlyArray<Transition<never, R>>
 }
 
+// ToolInteractions supplies handlers for accepted calls, including tools absent from the current model view (integration/budget-escalation.test.ts).
 export interface ToolInteractions<R = never> {
   readonly tools: () => ReadonlyArray<ToolOffer<R>>
 }

@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import { NativeOutputSupport } from "../model/contract"
 import type { AgentComponent } from "./view"
 import { component } from "@clavia/tardigrade-core/actor"
@@ -5,6 +6,7 @@ import { component } from "@clavia/tardigrade-core/actor"
 // nativeOutput selects provider-native structured output and carries its model-layer requirement into the host type.
 export const nativeOutput: AgentComponent<NativeOutputSupport> = component({
   name: "output.native",
+  state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
   initial: () => undefined,
   step: (state: undefined) => state,
   output: () => ({

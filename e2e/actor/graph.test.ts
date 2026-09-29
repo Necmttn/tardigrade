@@ -102,7 +102,7 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
     components: [
       infer([escalate(
         budget(work(), {
-          onExhausted: (reason, settle) => settle({ error: reason }),
+          onExhausted: reason => ({ error: reason }),
           usage: (observation) => observation.calls.length,
           rejectionMessage: "Tool budget reached. Answer now with your best result."
         }),

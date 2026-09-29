@@ -1,10 +1,10 @@
 import { upcastError } from "../log/upcast"
 import { Schema } from "effect"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/actor/method"
-import { type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import {
+  TurnProjectionState,
   initialTurnProjection,
   reduceTurnProjection,
   turnEpochFrom,
@@ -43,7 +43,7 @@ const turnOf = (event: Event): string => String((event as { readonly id?: unknow
 
 interface MessageValidationState {
   readonly turns: ReturnType<typeof initialTurnProjection>
-  readonly invalid: ReadonlyArray<{ readonly event: Event; readonly error: string; readonly context: TransitionContext }>
+  readonly invalid: ReadonlyArray<{ readonly event: Event; readonly error: string }>
 }
 
 // agentMessageMethod exposes an agent turn as the generic message actor method.
@@ -67,8 +67,9 @@ export const agentMessageMethod = actorMethod({
       })
     },
     projection: durableInputProjection({
+      state: { version: "1", schema: Schema.toCodecJson(Schema.Struct({ turns: TurnProjectionState, invalid: Schema.Array(Schema.Struct({ event: RecordedEvent, error: Schema.String })) })) },
       initial: (): MessageValidationState => ({ turns: initialTurnProjection(), invalid: [] }),
-      step: (state, event, context): MessageValidationState => {
+      step: (state, event): MessageValidationState => {
         let error: string | undefined
         if (event.type === "MessageReceived") {
           try {
@@ -79,13 +80,13 @@ export const agentMessageMethod = actorMethod({
         }
         return {
           turns: reduceTurnProjection(state.turns, event),
-          invalid: error === undefined ? state.invalid : [...state.invalid, { event, error, context }]
+          invalid: error === undefined ? state.invalid : [...state.invalid, { event, error }]
         }
       },
-      output: (state) => state.invalid.map(({ event, error, context }) => {
+      output: (state, runtime) => state.invalid.map(({ event, error }) => {
         const turn = turnOf(event)
         const epoch = turnEpochFrom(state.turns, turn)
-        return context.intent("reject", (at) => turnFailed({
+        return runtime.transition(event).intent("reject", (at) => turnFailed({
           error: `invalid MessageReceived: ${error}; send a new corrected message`,
           cause: "message_invalid", attempts: 0, attemptKey: `${turn}/message`, turn,
           ...(epoch === 0 ? {} : { epoch }), at

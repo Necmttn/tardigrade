@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import fc from "fast-check"
+import { Schema } from "effect"
 import { component, withResponse } from "@clavia/tardigrade-core/actor"
 import { eventAt, type Event } from "@clavia/tardigrade-core/event"
 import { replayState } from "@clavia/tardigrade-core/projection"
@@ -38,7 +39,7 @@ const workload = (measurement: "request" | "execution") =>
       transitions: state.pending.map(({ id, cost, context }) =>
         withResponse(
           context.intent(`execute/${state.revision}`, { type: "Executed", id, cost }),
-          (result: { error: string }) => context.intent("refuse", { type: "Refused", id, result })
+          (result: { error: string }) => context.intent("refuse", at => ({ type: "Refused", id, result, revision: state.revision, at }))
         )
       )
     })
@@ -47,9 +48,10 @@ const workload = (measurement: "request" | "execution") =>
 const setup = (measurement: "request" | "execution", limit: number) => {
   const machine = testMachineOf(
     budget(workload(measurement), {
+      result: { version: "1", schema: Schema.Struct({ error: Schema.String }) },
       limit,
       usage: ({ measured }) => measured,
-      onExhausted: (reason, respond) => respond({ error: reason })
+      onExhausted: (reason) => ({ error: reason })
     })
   )
   const log: Event[] = []
@@ -89,8 +91,8 @@ test("multiple limits admit work only when every rule allows it, regardless of o
     rules => {
       for (const ordered of [rules, [...rules].reverse()]) {
         const machine = testMachineOf(budget(workload("request"), {
-          limits: ordered.map((rule, index) => ({ limit: rule.limit, usage: () => rule.used, rejectionMessage: String(index), onExhausted: (reason, respond) => respond({ error: `rule:${reason}` }) })),
-          onExhausted: (reason, respond) => respond({ error: reason })
+          limits: ordered.map((rule, index) => ({ limit: rule.limit, usage: () => rule.used, rejectionMessage: String(index), onExhausted: (reason) => ({ error: `rule:${reason}` }) })),
+          onExhausted: (reason) => ({ error: reason })
         }))
         const log = [{ type: "MessageReceived", id: "turn" }, { type: "Requested", id: 1, cost: 1, turn: "turn" }]
         const output = machine.output(replayState(machine, log))
@@ -103,6 +105,37 @@ test("multiple limits admit work only when every rule allows it, regardless of o
       }
     }
   ))
+})
+
+test("a pending refusal retains its result when usage changes the exceeded limit", () => {
+  let decisions = 0
+  const machine = testMachineOf(budget(workload("request"), {
+    limits: [
+      { limit: 6, usage: ({ measured }) => measured, rejectionMessage: "first" },
+      { limit: 6, usage: ({ measured }) => 12 - measured, rejectionMessage: "second" }
+    ],
+    onExhausted: reason => {
+      decisions++
+      return { error: reason }
+    }
+  }))
+  let state = machine.initial()
+  const log: Event[] = []
+  const append = (event: Event) => {
+    log.push(event)
+    state = machine.step(state, eventAt(event, log.length))
+  }
+  append({ type: "Requested", id: 0, cost: 0 })
+  for (const used of [0, 12, 6]) {
+    append({ type: "UsageRecorded", used })
+    const output = machine.output(state)
+    const events = output.transitions.flatMap(work => work.kind === "intent" ? work.events(work.input, 123) : [])
+    expect(events.filter(event => event.type === "Refused")).toEqual([
+      expect.objectContaining({ id: 0, result: { error: "second" }, at: 123 })
+    ])
+    expect(events.some(event => event.type === "Executed")).toBe(false)
+    expect(decisions).toBe(1)
+  }
 })
 
 for (const measurement of ["request", "execution"] as const) {
@@ -152,7 +185,7 @@ for (const measurement of ["request", "execution"] as const) {
           fixture.append({ type: "BudgetGranted", amount: excess, turn: "turn" })
           for (let i = 0; i < refreshes; i++) fixture.append({ type: "Refresh" })
           fixture.checkReplay()
-          expect(fixture.proposed()).toContainEqual(expect.objectContaining({ type: "Refused", id: 0 }))
+          expect(fixture.proposed()).toContainEqual(expect.objectContaining({ type: "Refused", id: 0, revision: refreshes, at: 0 }))
           expect(fixture.proposed().some((event) => event.type === "Executed")).toBe(false)
           fixture.drain(1)
           expect(fixture.output().view).toMatchObject({ used: limit + excess, remaining: 0, pending: [] })

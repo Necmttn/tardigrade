@@ -67,7 +67,7 @@ describe("tool batches", () => {
     await fc.assert(fc.asyncProperty(fc.integer({ min: 1, max: 20 }), fc.integer({ min: 1, max: 20 }), async (limit, replacement) => {
       const components = (amount: number) => [budget(tool({ spec, run: () => Effect.void }), {
         limit: amount,
-        onExhausted: (reason, settle) => settle({ error: reason }),
+        onExhausted: (reason) => ({ error: reason }),
         usage: (observation) => observation.calls.length,
         rejectionMessage: "Tool budget reached. Answer now with your best result.",
         view: (view, state) =>
@@ -139,7 +139,7 @@ describe("tool batches", () => {
             }),
             {
               limit,
-              onExhausted: (reason, settle) => settle({ error: reason }),
+              onExhausted: (reason) => ({ error: reason }),
               usage: (observation) => observation.calls.length,
               rejectionMessage: "Tool budget reached. Answer now with your best result.",
               view: (view, state) =>
@@ -311,7 +311,7 @@ describe("tool batches", () => {
         }),
         {
           limit,
-          onExhausted: (reason, settle) => settle({ error: reason }),
+          onExhausted: (reason) => ({ error: reason }),
           usage: (observation) => observation.calls.length,
           rejectionMessage: "Tool budget reached. Answer now with your best result.",
           view: (view, state) =>
@@ -395,7 +395,7 @@ describe("tool batches", () => {
       }),
       {
         limit: 2,
-        onExhausted: (reason, settle) => settle({ error: reason }),
+        onExhausted: (reason) => ({ error: reason }),
         usage: (observation) => observation.calls.length,
         rejectionMessage: "Tool budget reached. Answer now with your best result.",
         view: (view, state) =>
@@ -431,7 +431,7 @@ describe("tool batches", () => {
       }),
       {
         limit: 1,
-        onExhausted: (reason, settle) => settle({ error: reason }),
+        onExhausted: (reason) => ({ error: reason }),
         usage: (observation) => observation.calls.length,
         rejectionMessage: "Tool budget reached. Answer now with your best result.",
         view: (view, state) =>
@@ -466,7 +466,7 @@ describe("tool batches", () => {
   test("a budget wall lets admitted code finish beside refused batch calls", async () => {
     const run = setup([budget([codeMode(), tool({ spec, run: () => Effect.succeed("read") })], {
       limit: 1,
-      onExhausted: (reason, settle) => settle({ error: reason }),
+      onExhausted: (reason) => ({ error: reason }),
       usage: ({ children }) => children.reduce((used, observation) => used + observation.calls.length, 0),
       rejectionMessage: "Tool budget reached. Answer now with your best result.",
       view: (view, state) =>

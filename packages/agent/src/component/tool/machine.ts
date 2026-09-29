@@ -1,7 +1,7 @@
 import type { ToolInteractions } from "../view"
 import { type AgentComponent, type AgentView } from "../view"
 import { annotateTransition, bindTransitionContext, executionOnly, type TransitionContext } from "@clavia/tardigrade-core/transition/transition"
-import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
+import { RecordedEvent, eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 import { type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { toolCallPosition, toolResultPosition } from "../../log/tool"
@@ -11,13 +11,13 @@ import { turnTerminalOf } from "@clavia/tardigrade-code/execution/turns"
 import { eventEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import type { InvocationCancellation } from "@clavia/tardigrade-core/interaction/events"
 import type { Component } from "@clavia/tardigrade-core/actor"
-import { component as defineComponent, withResponse, type ChildOf, legacyComponent, type ComponentOutput } from "@clavia/tardigrade-core/actor"
-import { Chunk, HashMap, Option } from "effect"
+import { component as defineComponent, withResponse, type ChildOf, type ComponentOutput, type ComponentOutputContext } from "@clavia/tardigrade-core/actor"
+import { Chunk, HashMap, Option, Schema } from "effect"
 import {
   initialTurnProjection,
   reduceTurnProjection,
   turnViewFrom,
-  type TurnProjectionState
+  TurnProjectionState
 } from "@clavia/tardigrade-code/execution/turn-projection"
 
 // ToolConcurrency limits admitted calls while the remaining calls stay pending (../../runtime/batches.test.ts).
@@ -41,7 +41,7 @@ export const toolConcurrencyInstruction = (value: ToolConcurrency): string =>
 const admitted = <T>(
   records: ReadonlyArray<T>,
   concurrency: ToolConcurrency,
-  callOf: (record: T) => PendingCall,
+  callOf: (record: T) => Pick<PendingCall, "name">,
   limitOf: (record: T) => ToolConcurrency | undefined
 ): ReadonlyArray<T> => {
   const counts = new Map<string, number>()
@@ -173,9 +173,15 @@ export const toolsComponentFrom = <V, R = never>(
   concurrency: ToolConcurrency = DEFAULT_TOOL_CONCURRENCY
 ): Component<V, R> => {
   const dispatch = toolsReactorFrom(serve, toolsFor, concurrency)
-  return legacyComponent({
+  return defineComponent({
     name: "agent.tools",
-    derive: (log) => ({ view: empty, transitions: dispatch(log), interactions: { cancel: cancellation => cancelTools(log, cancellation) } })
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(RecordedEvent)) },
+    initial: () => Chunk.empty<Event>(),
+    step: (state, event) => Chunk.append(state, event),
+    output: state => {
+      const log = Chunk.toReadonlyArray(state)
+      return { view: empty, transitions: dispatch(log), interactions: { cancel: (cancellation: InvocationCancellation) => cancelTools(log, cancellation) } }
+    }
   })
 }
 
@@ -185,14 +191,21 @@ interface ProjectedTool<R = never> {
   readonly serve?: Serve<R>
 }
 
-interface PendingRecord<R = never> {
-  readonly call: PendingCall
-  readonly offered: ReadonlyArray<ProjectedTool<R>>
+type OfferedTool = Omit<ProjectedTool, "serve">
+
+type CallRecord = Omit<PendingCall, "context"> & { readonly event: Event }
+const callWithContext = ({ event, ...call }: CallRecord, context: ComponentOutputContext): PendingCall => ({
+  ...call, context: context.transition(eventAt(event, call.position))
+})
+
+interface PendingRecord {
+  readonly call: CallRecord
+  readonly offered: ReadonlyArray<OfferedTool>
   readonly log: Chunk.Chunk<Event>
 }
 
 // toolDispatchMatches associates code work with its ToolCalled occurrence (../../runtime/turn.test.ts).
-export const toolDispatchMatches = (event: Event, call: PendingCall): boolean =>
+export const toolDispatchMatches = (event: Event, call: Pick<PendingCall, "position">): boolean =>
   event.type === "CodeDispatched" && toolResultPosition(event) === call.position
 
 // ToolCallView exposes request data and its committed occurrence (machine.test.ts).
@@ -213,7 +226,7 @@ const TOOL_SOURCE: unique symbol = Symbol("toolSource")
 export const toolCallOf = (transition: Transition<never, unknown>): ToolCallView | undefined =>
   (transition as Transition<never, unknown> & { readonly [TOOL_SOURCE]?: ToolCallView })[TOOL_SOURCE]
 
-const callObservation = (call: PendingCall): ToolCallView => ({
+const callObservation = (call: ToolCallView): ToolCallView => ({
   position: call.position,
   callId: call.callId,
   name: call.name,
@@ -228,14 +241,37 @@ export interface ToolState {
   readonly pendingCalls: ReadonlyArray<ToolCallView>
 }
 
-interface IncrementalToolsState<R = never> {
+interface IncrementalToolsState {
   readonly turns: TurnProjectionState
-  readonly known: HashMap.HashMap<number, PendingCall>
-  readonly pending: HashMap.HashMap<number, PendingRecord<R>>
-  readonly offers: HashMap.HashMap<string, ReadonlyArray<ProjectedTool<R>>>
+  readonly known: HashMap.HashMap<number, CallRecord>
+  readonly pending: HashMap.HashMap<number, PendingRecord>
+  readonly offers: HashMap.HashMap<string, ReadonlyArray<OfferedTool>>
   readonly heads: HashMap.HashMap<string, Event>
   readonly thread?: Event
 }
+
+const CallRecord = Schema.Struct({
+  callId: Schema.String,
+  position: Schema.Int,
+  validationError: Schema.optionalKey(Schema.String),
+  name: Schema.String,
+  arguments: Schema.UndefinedOr(Schema.Unknown),
+  turn: Schema.optionalKey(Schema.String),
+  epoch: Schema.optionalKey(Schema.Int),
+  event: RecordedEvent
+})
+const OfferedTool = Schema.Struct({
+  spec: Schema.Struct({ name: Schema.String }),
+  concurrency: Schema.optionalKey(Schema.Union([Schema.Int, Schema.Literal("unbounded")]))
+})
+const IncrementalToolsState = Schema.Struct({
+  turns: TurnProjectionState,
+  known: Schema.HashMap(Schema.Int, CallRecord),
+  pending: Schema.HashMap(Schema.Int, Schema.Struct({ call: CallRecord, offered: Schema.Array(OfferedTool), log: Schema.Chunk(RecordedEvent) })),
+  offers: Schema.HashMap(Schema.String, Schema.Array(OfferedTool)),
+  heads: Schema.HashMap(Schema.String, RecordedEvent),
+  thread: Schema.optionalKey(RecordedEvent)
+})
 
 type ToolOwnership = { readonly name: string }
 
@@ -251,11 +287,12 @@ const toolsMachineFrom = <V, R, O, I>(
   toolsOf: (child: ChildOf<Component<V, R, never, I>>) => ReadonlyArray<ProjectedTool<R>>,
   concurrency: ToolConcurrency,
   ownership: ToolOwnership | undefined,
-  project: (view: V, tools: ToolState) => O
+  project: (view: V, tools: ToolState) => O,
+  offeredOf = toolsOf
 ): Component<O, R, unknown, I> => {
   const limit = toolConcurrencyOf(concurrency)
   const name = ownership?.name ?? "agent.tools"
-  const observation = (state: IncrementalToolsState<R>): ToolState => {
+  const observation = (state: IncrementalToolsState, context: ComponentOutputContext): ToolState => {
     const trajectory = turnViewFrom(state.turns)
     const calls = trajectory.flatMap((event) => {
       if (event.type !== "ToolCalled") return []
@@ -268,20 +305,25 @@ const toolsMachineFrom = <V, R, O, I>(
       pendingCalls: (ownership === undefined
         ? admitted([...HashMap.values(state.pending)].sort((a, b) => a.call.position - b.call.position), limit, (record) => record.call, (record) => record.offered.find((tool) => tool.spec.name === record.call.name)?.concurrency)
         : [...HashMap.values(state.pending)].sort((a, b) => a.call.position - b.call.position))
-        .filter((record) => record.offered.some((tool) => tool.spec.name === record.call.name) && (ownership === undefined || !Chunk.toReadonlyArray(record.log).some((event) => (record.call.context.matches("dispatch", event) || toolDispatchMatches(event, record.call)))))
+        .filter((record) => {
+          if (!record.offered.some(tool => tool.spec.name === record.call.name)) return false
+          if (ownership === undefined) return true
+          const call = callWithContext(record.call, context)
+          return !Chunk.toReadonlyArray(record.log).some(event => call.context.matches("dispatch", event) || toolDispatchMatches(event, call))
+        })
         .map((record) => callObservation(record.call))
     }
   }
-  const output = (state: IncrementalToolsState<R>, child: ChildOf<Component<V, R, never, I>>): ComponentOutput<O, R, unknown, I> => {
+  const output = (state: IncrementalToolsState, child: ChildOf<Component<V, R, never, I>>, _data: readonly [], context: ComponentOutputContext): ComponentOutput<O, R, unknown, I> => {
     const pending = [...HashMap.values(state.pending)].sort((a, b) => a.call.position - b.call.position)
     const selected = ownership === undefined
       ? admitted(pending, limit, (record) => record.call, (record) => record.offered.find((tool) => tool.spec.name === record.call.name)?.concurrency)
       : pending
-    const tools = observation(state)
+    const tools = observation(state, context)
     const observed = project(child.output().view, tools)
     const completable = new Set(tools.pendingCalls.map(call => call.position))
     const transitions = selected.flatMap((current) => {
-      const call = current.call
+      const call = callWithContext(current.call, context)
       const answering: Answer = (result) => call.context.intent("answer", (at) => toolReturned({
         callId: call.callId, result, ...(call.validationError === undefined ? {} : { isFailure: true }), ...(call.turn === undefined ? {} : { turn: call.turn }), at
       }), { invocation: call.turn === undefined ? null : { method: "message", id: call.turn, epoch: call.epoch ?? 0 } })
@@ -289,9 +331,13 @@ const toolsMachineFrom = <V, R, O, I>(
         const tool = current.offered.find((candidate) => candidate.spec.name === current.call.name)
         const log = Chunk.toReadonlyArray(current.log)
         if (tool === undefined) return [answering({ error: call.validationError ?? unknownToolError(call.name, current.offered.map((tool) => tool.spec)) })]
-        if (tool.serve === undefined) return []
+        const serve = toolsOf(child).find(candidate => candidate.spec.name === call.name)?.serve
+        if (serve === undefined) {
+          if (ownership === undefined) return []
+          throw new Error(`Missing handler for accepted tool "${call.name}"`)
+        }
         if (call.validationError !== undefined) return [answering({ error: call.validationError })]
-        return tool.serve(call, log, answering) ?? []
+        return serve(call, log, answering) ?? []
       }
       const identity: ToolCallView = Object.freeze(callObservation(call))
       return propose().map((transition) => {
@@ -309,7 +355,7 @@ const toolsMachineFrom = <V, R, O, I>(
             record.call.turn === cancellation.invocation.id &&
             (record.call.epoch ?? 0) === cancellation.invocation.epoch
           )
-          .map((record) => record.call)
+          .map((record) => callWithContext(record.call, context))
         return [...(child.output().interactions?.cancel?.(cancellation) ?? []), ...toolCancellationTransitions(calls, cancellation)]
       }
     }
@@ -323,9 +369,10 @@ const toolsMachineFrom = <V, R, O, I>(
     }
     return { view: observed, interactions: { cancel: interactions.cancel } as I & typeof interactions, transitions: [...transitions, ...children.transitions.map(executionOnly)] }
   }
-  return defineComponent<IncrementalToolsState<R>, O, R, unknown, typeof child, readonly [], I>({
+  return defineComponent<IncrementalToolsState, O, R, unknown, typeof child, readonly [], I>({
     children: child,
     name,
+    state: { version: "1", schema: Schema.toCodecJson(IncrementalToolsState) },
     initial: (): IncrementalToolsState => ({
       turns: initialTurnProjection(),
       known: HashMap.empty(),
@@ -333,11 +380,13 @@ const toolsMachineFrom = <V, R, O, I>(
       offers: HashMap.empty(),
       heads: HashMap.empty()
     }),
-    step: (state, event, context, _child, previous) => {
+    step: (state, event, _context, _child, previous) => {
       const eventTurn = String((event as { readonly turn?: unknown }).turn ?? "")
-      let before: ReadonlyArray<ProjectedTool<R>> | undefined
-      const offeredBefore = (): ReadonlyArray<ProjectedTool<R>> => {
-        before ??= toolsOf(previous)
+      let before: ReadonlyArray<OfferedTool> | undefined
+      const offeredBefore = (): ReadonlyArray<OfferedTool> => {
+        before ??= offeredOf(previous).map(({ spec, concurrency }) => ({
+          spec: { name: spec.name }, ...(concurrency === undefined ? {} : { concurrency })
+        }))
         return before
       }
       const offers = event.type === "ModelCalled" && eventTurn !== ""
@@ -347,9 +396,9 @@ const toolsMachineFrom = <V, R, O, I>(
         ? HashMap.set(state.heads, String((event as { readonly id?: unknown }).id ?? ""), event)
         : state.heads
       const thread = event.type === "ThreadCreated" ? event : state.thread
-      let pending: HashMap.HashMap<number, PendingRecord<R>> = HashMap.map(
+      let pending: HashMap.HashMap<number, PendingRecord> = HashMap.map(
         state.pending,
-        (record): PendingRecord<R> => ({ ...record, log: Chunk.append(record.log, event) })
+        (record): PendingRecord => ({ ...record, log: Chunk.append(record.log, event) })
       )
       let known = state.known
       if (event.type === "ToolCalled") {
@@ -359,11 +408,11 @@ const toolsMachineFrom = <V, R, O, I>(
           const turn = (event as { readonly turn?: unknown }).turn
           const turnId = turn === undefined ? undefined : str(turn)
           const epoch = (event as { readonly epoch?: unknown }).epoch
-          const call: PendingCall = {
+          const call: CallRecord = {
             callId,
             position: toolCallPosition(event),
             ...(typeof event.validationError === "string" ? { validationError: event.validationError } : {}),
-            context,
+            event,
             name: str((event as { readonly name?: unknown }).name),
             arguments: (event as { readonly arguments?: unknown }).arguments,
             ...(turnId === undefined ? {} : { turn: turnId }),
@@ -382,12 +431,12 @@ const toolsMachineFrom = <V, R, O, I>(
           const callOffer = turnId === undefined
             ? offeredBefore()
             : Option.getOrElse(HashMap.get(offers, turnId), offeredBefore)
-          const record: PendingRecord<R> = {
+          const record: PendingRecord = {
             call,
             offered: callOffer,
             log: Chunk.fromIterable([...prefix, event])
           }
-          if (ownership === undefined || callOffer.some((tool) => tool.spec.name === call.name && tool.serve !== undefined)) {
+          if (ownership === undefined || callOffer.some((tool) => tool.spec.name === call.name)) {
             pending = HashMap.set(pending, toolCallPosition(event), record)
             known = HashMap.set(known, toolCallPosition(event), call)
           }
@@ -415,7 +464,7 @@ const toolsMachineFrom = <V, R, O, I>(
   })
 }
 
-// toolComponent keeps offered handlers private and exposes their work through output transitions (machine.test.ts).
+// toolComponent records visible offers as data and resolves accepted calls through current owner handlers (machine.test.ts).
 export function toolComponent<R, V extends AgentView>(child: AgentComponent<R, V, never, ToolInteractions<R>>): AgentComponent<R, V & ToolState, unknown>
 export function toolComponent<R, V extends AgentView, P extends AgentView>(child: AgentComponent<R, V, never, ToolInteractions<R>>, options: { readonly view: (child: V, tools: ToolState) => P }): AgentComponent<R, P, unknown>
 export function toolComponent<R, V extends AgentView, P extends AgentView>(child: AgentComponent<R, V, never, ToolInteractions<R>>, options?: { readonly view: (child: V, tools: ToolState) => P }): AgentComponent<R, P | (V & ToolState), unknown> {
@@ -424,7 +473,12 @@ export function toolComponent<R, V extends AgentView, P extends AgentView>(child
     bound => bound.output().interactions?.tools() ?? [],
     DEFAULT_TOOL_CONCURRENCY,
     { name: `${child.name}.dispatch` },
-    (view, tools) => options === undefined ? { ...view, ...tools } : options.view(view, tools)
+    (view, tools) => options === undefined ? { ...view, ...tools } : options.view(view, tools),
+    bound => {
+      const output = bound.output()
+      const handlers = output.interactions?.tools() ?? []
+      return output.view.tools.filter(tool => handlers.some(handler => handler.spec.name === tool.spec.name && handler.serve !== undefined))
+    }
   )
   return { ...owned, name: child.name }
 }

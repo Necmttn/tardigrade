@@ -1,10 +1,10 @@
 import { toolComponent, type ToolComponent, toolConcurrencyOf, type ToolConcurrency } from "./machine"
-import { Clock, Effect } from "effect"
-import { component, legacyComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { Chunk, Clock, Effect, Schema } from "effect"
+import { component, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import type { CodeComponent } from "@clavia/tardigrade-code/package/definition"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { tools as packageTools, type ToolsOptions } from "./packages"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { toolReturned } from "../../log/events"
 import type { ToolSpec } from "../../model/request"
@@ -77,9 +77,16 @@ const nativeTools = <R = never>(
   })
   const child =
     typeof system === "function"
-      ? legacyComponent({ name: options.name ?? "tools", derive: (log) => ({ ...derive(system(log)) }) })
+      ? component({
+          name: options.name ?? "tools",
+          state: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(RecordedEvent)) },
+          initial: () => Chunk.empty<Event>(),
+          step: (state, event) => Chunk.append(state, event),
+          output: state => derive(system(Chunk.toReadonlyArray(state)))
+        })
       : component({
           name: options.name ?? "tools",
+          state: { version: "1", schema: Schema.String },
           initial: () => system,
           step: (state: string) => state,
           output: (state) => ({ ...derive(state) })

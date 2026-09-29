@@ -276,7 +276,7 @@ test("the render is the composed output, and the request carries it to the model
       }
     })
     const agent = assembled(infer([budget(echoTable, {
-      onExhausted: (reason, settle) => settle({ error: reason }),
+      onExhausted: (reason) => ({ error: reason }),
       usage: (observation) => observation.calls.length,
       rejectionMessage: "Tool budget reached. Answer now with your best result.",
       view: (view, state) =>
@@ -353,11 +353,11 @@ test("a direct package call teaches the execute calling convention", async () =>
     })
   })
 
-test("a tool remains routable from the view that offered its call", async () => {
+test("an accepted tool call finishes after its model-visible offer disappears", async () => {
     const offer: ToolOffer = { spec: { name: "once", description: "one call", inputSchema: {} }, serve: (_call, _log, answer) => [answer("served")] }
     const ephemeral = toolComponent(component({ name: "ephemeral", initial: () => false,
       step: (hidden, event) => hidden || event.type === "ToolCalled",
-      output: hidden => ({ view: { ...AGENT_VIEW_ALGEBRA.empty, tools: hidden ? [] : [{ spec: offer.spec }] }, transitions: [], interactions: { tools: () => hidden ? [] : [offer] } })
+      output: hidden => ({ view: { ...AGENT_VIEW_ALGEBRA.empty, tools: hidden ? [] : [{ spec: offer.spec }] }, transitions: [], interactions: { tools: () => [offer] } })
     }))
     const mind = testInferenceLayer( {
       react: (request: InferRequest) => Effect.succeed(

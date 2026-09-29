@@ -1,3 +1,4 @@
+import type { ComponentCheckpoint, ComponentStateSchema } from "./checkpoint"
 import { Context } from "effect"
 import { createMachine } from "./composition/parent"
 import { registerComponent } from "./runtime"
@@ -14,6 +15,8 @@ import { inputScopesOf, type ComponentInputs } from "../transition/interaction"
 export type { TransitionContext } from "../transition/transition"
 export type { InvocationCancellation } from "../interaction/events"
 
+export { ComponentCheckpoint, type ComponentStateSchema } from "./checkpoint"
+
 /**
  * ComponentMachine erases private component state while preserving its Moore-style machine contract.
  *
@@ -29,23 +32,34 @@ export type { InvocationCancellation } from "../interaction/events"
  * Cancellation is an optional state query that derives cleanup transitions for one invocation.
  */
 export interface ComponentMachine<View, Requirements = never, Result = never, Interactions = unknown>
-  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {}
+  extends Projection<unknown, ComponentOutput<View, Requirements, Result, Interactions>> {
+  readonly checkpoint?: {
+    readonly encode: (state: unknown) => ComponentCheckpoint
+    readonly decode: (checkpoint: unknown, data?: Context.Context<never>) => unknown
+  }
+}
 
-// ComponentDependencies names data services bound when a component snapshot is initialized.
+// ComponentDependencies names runtime services bound at initialization or restore (dependencies.test.ts).
 export type ComponentDependencies = ReadonlyArray<Context.Key<unknown, unknown>>
 export type ComponentData<D extends ComponentDependencies> = { readonly [K in keyof D]: Context.Service.Shape<D[K]> }
 export type ComponentDataRequirements<D extends ComponentDependencies> = Context.Service.Identifier<D[number]>
 type ChildRequirements<C extends ComponentChildren> = ComponentRequirements<C extends ReadonlyArray<unknown> ? C[number] : C>
 
+// ComponentOutputContext reconstructs event-owned work using the activation's interaction scopes (checkpoint.test.ts).
+export interface ComponentOutputContext {
+  readonly transition: (event: Event) => TransitionContext
+}
+
 // ComponentDefinition is the typed author surface for a component machine.
 export interface ComponentDefinition<State, View, Requirements = never, Result = unknown, Children extends ComponentChildren = readonly [], Dependencies extends ComponentDependencies = readonly [], Interactions = unknown, Input extends ComponentInputs = ComponentInputs> {
   readonly name: string
+  readonly state?: ComponentStateSchema<State>
   readonly children?: Children
   readonly input?: Input
   readonly dependencies?: Dependencies
   readonly initial: (children: ChildOf<Children>, data: ComponentData<Dependencies>) => State
   readonly step: (state: Readonly<State>, event: Event, context: TransitionContext, children: ChildOf<Children>, previous: ChildOf<Children>) => State
-  readonly output: (state: Readonly<State>, children: ChildOf<Children>) => ComponentOutput<View, Requirements, Result, Interactions>
+  readonly output: (state: Readonly<State>, children: ChildOf<Children>, data: ComponentData<Dependencies>, context: ComponentOutputContext) => ComponentOutput<View, Requirements, Result, Interactions>
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
@@ -64,6 +78,9 @@ export const component = <State, View, Requirements = never, Result = unknown, c
   }
   if (typeof definition.name !== "string" || definition.name.length === 0) throw new Error("components require a nonempty name")
   const members: ReadonlyArray<Component<unknown, unknown>> = definition.children === undefined ? [] : Array.isArray(definition.children) ? [...definition.children] : [definition.children as Component<unknown, unknown>]
+  if (definition.state !== undefined) {
+    if (definition.state.version.length === 0) throw new Error("component checkpoints require a nonempty version")
+  }
   const identities = transitionComponentIds([{ [TRANSITION_COMPONENT_IDS]: [definition.name] }, ...members])
   const fragments = members.flatMap((child) => child.keys === undefined ? [] : [child.keys])
   const inherited = mergeComponentContracts(members)

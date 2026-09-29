@@ -1,11 +1,10 @@
-import { Chunk, HashMap, Option } from "effect"
-import type { TransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { Chunk, HashMap, Option, Schema } from "effect"
 import { authorityTarget } from "../escalate/target"
 import { permissionRequestDecided, permissionRequestFailed } from "../../log/events"
 import type { PermissionAuthority } from "../escalate/permission-authority"
 import type { Intent } from "@clavia/tardigrade-core/intent"
-import type { Event } from "@clavia/tardigrade-core/event"
-import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
+import { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
@@ -51,7 +50,7 @@ export type PermissionsComponent<R = never, V extends object = AgentView, Result
   Component<V & PermissionState, R, Result, PermissionInteractions>
 
 interface Request {
-  readonly context: TransitionContext | undefined
+  readonly event: Event | undefined
   readonly subject: PermissionSubject | undefined
   readonly invocation: InvocationRef | undefined
 }
@@ -67,6 +66,7 @@ export const permissionEscalation = <R, V extends object, Result>(
     component({
       name: "permissions.escalation",
       children: child,
+      state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
       initial: () => undefined,
       step: (state) => state,
 
@@ -82,33 +82,34 @@ export const permissions = <V extends object, R, Result, I>(
   child: Component<V, R, Result, I>,
   options: PermissionsOptions<NoInfer<V>, NoInfer<R>, NoInfer<Result>>
 ): PermissionsComponent<R | Router | Self, V, Result> => {
-  const classify = (requests: HashMap.HashMap<string, Request>, current: ChildOf<typeof child>, context?: TransitionContext) => {
+  const classify = (requests: HashMap.HashMap<string, Request>, current: ChildOf<typeof child>, event?: Event) => {
     const output = current.output()
     for (const work of output.transitions) {
       if (work.respond === undefined) continue
       const previous = Option.getOrUndefined(HashMap.get(requests, work.key))
       if (previous === undefined) {
         requests = HashMap.set(requests, work.key, {
-          context,
+          event,
           subject: options.request(work, output.view),
           invocation: work.invocation
         })
-      } else if (previous.context === undefined && context !== undefined) {
-        requests = HashMap.set(requests, work.key, { ...previous, context })
+      } else if (previous.event === undefined && event !== undefined) {
+        requests = HashMap.set(requests, work.key, { ...previous, event })
       }
     }
     return requests
   }
   const pending = component({
     name: "permissions",
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Struct({ log: Schema.Chunk(RecordedEvent), requests: Schema.HashMap(Schema.String, Schema.Struct({ event: Schema.UndefinedOr(RecordedEvent), subject: Schema.UndefinedOr(Schema.Struct({ action: Schema.String, resource: Schema.optionalKey(Schema.String), reason: Schema.String, timeoutMs: Schema.optionalKey(Schema.Finite) })), invocation: Schema.UndefinedOr(InvocationRef) })) })) },
     children: child,
     initial: child => ({ log: Chunk.empty<Event>(), requests: classify(HashMap.empty(), child) }),
-    step: (state, event, context, child) => ({
+    step: (state, event, _context, child) => ({
       log: Chunk.append(state.log, event),
-      requests: classify(state.requests, child, context)
+      requests: classify(state.requests, child, event)
     }),
 
-    output: (state, child): ComponentOutput<V & PermissionState, R | Router | Self, Result, PermissionInteractions> => {
+    output: (state, child, _data, runtime): ComponentOutput<V & PermissionState, R | Router | Self, Result, PermissionInteractions> => {
       const output = child.output()
       const log = Chunk.toReadonlyArray(state.log)
       const decisionId = (key: string) => `permission/${key}`
@@ -146,9 +147,10 @@ export const permissions = <V extends object, R, Result, I>(
         interactions: {
           escalate: (authority) => output.transitions.flatMap((work): ReadonlyArray<Transition<never, Router | Self>> => {
             const request = Option.getOrUndefined(HashMap.get(state.requests, work.key))
-            if (request?.subject === undefined || request.context === undefined || decisionOf(work.key) !== undefined)
+            if (request?.subject === undefined || request.event === undefined || decisionOf(work.key) !== undefined)
               return []
-            const { subject, context, invocation } = request
+            const { subject, invocation } = request
+            const context = runtime.transition(request.event)
             const id = decisionId(work.key)
             const turn = invocation?.id ?? ""
             const target = authorityTarget(authority, log.find(event => event.type === "MessageReceived" && event.id === turn))

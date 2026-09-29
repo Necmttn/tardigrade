@@ -1,7 +1,7 @@
-import { Chunk, Effect } from "effect"
-import { component, type InteractionRequest } from "@clavia/tardigrade-core/actor"
+import { Chunk, Effect, Schema } from "effect"
+import { component, type ComponentOutputContext, type InteractionRequest } from "@clavia/tardigrade-core/actor"
 import { Alarm } from "@clavia/tardigrade-core/alarm"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import type { TransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { definePackage, type Package } from "./definition"
 
@@ -22,15 +22,10 @@ interface Request extends AlarmNotification {
   readonly fired?: TransitionContext
 }
 
-interface RecordedEvent {
-  readonly event: Event
-  readonly context: TransitionContext
-}
-
 // pendingFiringsOf retains fired requests until their source-owned completion is recorded (alarm.test.ts).
-const pendingFiringsOf = (log: ReadonlyArray<RecordedEvent>): ReadonlyArray<{ readonly request: Request; readonly context: TransitionContext }> => {
+const pendingFiringsOf = (log: ReadonlyArray<Event>, runtime: ComponentOutputContext): ReadonlyArray<{ readonly request: Request; readonly context: TransitionContext }> => {
   const requests = new Map<string, Request>()
-  for (const { event, context } of log) {
+  for (const event of log) {
     if (event.type === "AlarmSet" && typeof event.id === "string" && event.id.startsWith(ALARM_ID_PREFIX) &&
       typeof event.wakeAt === "number") {
       requests.set(event.id, { id: event.id, wakeAt: event.wakeAt, note: typeof event.note === "string" ? event.note : "" })
@@ -38,7 +33,7 @@ const pendingFiringsOf = (log: ReadonlyArray<RecordedEvent>): ReadonlyArray<{ re
       requests.delete(event.id)
     } else if (event.type === "AlarmFired" && typeof event.at === "number") {
       for (const [id, request] of requests) {
-        if (request.wakeAt <= event.at && request.fired === undefined) requests.set(id, { ...request, fired: context })
+        if (request.wakeAt <= event.at && request.fired === undefined) requests.set(id, { ...request, fired: runtime.transition(event) })
       }
     }
     for (const [id, request] of requests) {
@@ -92,11 +87,12 @@ export const alarm = (options: AlarmOptions): Package<Alarm> => {
   const notifications = component({
     name: "alarms.notifications",
     children: calls,
-    initial: () => Chunk.empty<RecordedEvent>(),
-    step: (state, event, context) => Chunk.append(state, { event, context }),
-    output: (state, child) => {
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(RecordedEvent)) },
+    initial: () => Chunk.empty<Event>(),
+    step: (state, event) => Chunk.append(state, event),
+    output: (state, child, _data, runtime) => {
       const output = child.output()
-      const due = pendingFiringsOf(Chunk.toReadonlyArray(state))
+      const due = pendingFiringsOf(Chunk.toReadonlyArray(state), runtime)
       return {
         ...output,
         transitions: [...output.transitions, ...due.flatMap(({ request: { id, wakeAt, note }, context }) => {

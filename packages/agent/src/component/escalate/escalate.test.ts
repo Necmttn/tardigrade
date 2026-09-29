@@ -19,7 +19,7 @@ const budgeted = () =>
   budget(tools(), {
     limit: 1,
     usage: ({ calls }) => calls.length,
-    onExhausted: (reason, respond) => respond({ error: reason })
+    onExhausted: (reason) => ({ error: reason })
   })
 const pendingBudget: Event = {
   type: "BudgetRequestReceived",

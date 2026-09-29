@@ -1,6 +1,6 @@
 import { testMachineOf as machineOf } from "../fixtures/component"
 import { replayProjection, replayState } from "@clavia/tardigrade-core/projection"
-import { expect, expectTypeOf, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { type Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
@@ -35,10 +35,7 @@ test("budget supplies a result through tools without running refused work", asyn
   })
   const governed = budget(child, {
     limit: 1,
-    onExhausted: (_reason, settle) => {
-      expectTypeOf<Parameters<typeof settle>[0]>().toEqualTypeOf<unknown>()
-      return settle({ error: "no more budget" })
-    },
+    onExhausted: () => ({ error: "no more budget" }),
     usage: (observation) => observation.calls.length,
     view: (view, state) =>
       state.phase === "spending"
@@ -88,7 +85,7 @@ test("permission refusal consumes no budget", () => {
     onDenied: (_reason, respond) => respond({ error: "permission denied" })
   })
   const governed = budget(permission, {
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: ({ permissions }) => permissions.filter(permission => permission.status === "allowed").length
   })
   const log = [head, called("a"), { type: "PermissionRequestDecided", callId: 'permission/[2,"tools.dispatch","answer"]', granted: false }]

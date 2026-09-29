@@ -23,7 +23,7 @@ test.each(["code", "tools"] as const)("%s honors a child's budget for concurrent
     name: "counter",
     description: "Counts admitted executions",
     methods: { run: value => Effect.sync(() => { invoked.push(value); return value }) }
-  }), { limit: 1, usage: ({ calls }) => calls.length, onExhausted: (reason, respond) => respond({ error: reason }) })
+  }), { limit: 1, usage: ({ calls }) => calls.length, onExhausted: (reason) => ({ error: reason }) })
   const definition = actor({ name: "package-budget", methods: {}, components: [adapter === "code" ? codeMode([governed]) : tools([governed])] })
   const log: Event[] = [
     { type: "MessageReceived", id: "turn", text: "Count", at: 0 },

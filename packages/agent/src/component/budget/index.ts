@@ -1,6 +1,6 @@
 import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import type { Intent } from "@clavia/tardigrade-core/intent"
-import type { ComponentResult } from "@clavia/tardigrade-core/component"
+import type { ComponentResult, ComponentStateSchema } from "@clavia/tardigrade-core/component"
 import { bindTransitionContext, transitionKeyOf } from "@clavia/tardigrade-core/transition/transition"
 import {
   component as defineComponent,
@@ -13,15 +13,15 @@ import {
   type ComponentViews
 } from "@clavia/tardigrade-core/actor"
 import { budgetDenied, budgetExhausted, budgetGranted } from "../../log/events"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { turnEpochOf, turnHead } from "@clavia/tardigrade-code/execution/turns"
 import {
   initialTurnProjection,
   reduceTurnProjection,
   turnViewFrom,
-  type TurnProjectionState
+  TurnProjectionState
 } from "@clavia/tardigrade-code/execution/turn-projection"
-import { Chunk, HashSet } from "effect"
+import { Chunk, HashSet, Schema } from "effect"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
 import { eventAt, eventPositionOf } from "@clavia/tardigrade-core/event"
 
@@ -31,10 +31,8 @@ export interface BudgetPolicy {
 }
 
 interface BudgetRejection<Result> {
-  readonly onExhausted: (
-    reason: string,
-    settle: (result: NoInfer<Result>) => Intent<never> | undefined
-  ) => Intent<never> | undefined
+  // onExhausted supplies the result retained for a rejected operation (budget.properties.test.ts).
+  readonly onExhausted: (reason: string) => NoInfer<Result> | undefined
   readonly rejectionMessage?: string
 }
 
@@ -44,6 +42,7 @@ export interface BudgetLimit<ChildView, Result = unknown> extends Partial<Budget
 }
 
 export type BudgetOptions<ChildView, Result = unknown> = BudgetRejection<Result> & {
+  readonly result?: ComponentStateSchema<NoInfer<Result>>
   readonly view?: (childView: ComponentReadonly<ChildView>, budget: BudgetState) => ChildView
 } & (
   | { readonly limit?: number; readonly usage: BudgetLimit<ChildView>["usage"]; readonly limits?: never }
@@ -136,6 +135,7 @@ export const budget = <
   type Result = ComponentResult<C extends ReadonlyArray<unknown> ? C[number] : C>
   type R = BudgetRequirements<C>
   type ChildView = BudgetView<C>
+  if (options.result?.version.length === 0) throw new Error("budget result schemas require a nonempty version")
   const multiple = options.limits !== undefined
   if (multiple && (options.usage !== undefined || options.limit !== undefined)) throw new Error("budget accepts either limits or limit and usage")
   const rules: ReadonlyArray<BudgetLimit<ChildView, Result>> = options.limits ?? [{ limit: options.limit ?? DEFAULT_BUDGET_POLICY.limit, usage: options.usage! }]
@@ -147,6 +147,7 @@ export const budget = <
       ? defineComponent({
           name: `${name}.children`,
           children: components as ReadonlyArray<AgentComponent<unknown>>,
+          state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
           initial: () => undefined,
           step: state => state,
 
@@ -178,17 +179,26 @@ export const budget = <
     }
   }
   type Child = ChildOf<typeof combined>
-  const refuse = (transition: ComponentWork<R, Result>, state: BudgetState): Intent<never> | undefined => {
-    if (transition.respond === undefined) return undefined
+  // Refusal retains the rejection result while output rebuilds its reply from the current responder (budget.properties.test.ts).
+  type Refusal = { readonly key: string; readonly result: Result }
+  const rejection = (state: BudgetState): Result | undefined => {
     const index = state.limits?.findIndex(rule => rule.used > rule.limit) ?? -1
     const rule = resolved[index < 0 ? 0 : index]!
-    return (rule.onExhausted ?? options.onExhausted)(rule.rejectionMessage ?? options.rejectionMessage ?? DEFAULT_BUDGET_REJECTION, transition.respond)
+    return (rule.onExhausted ?? options.onExhausted)(rule.rejectionMessage ?? options.rejectionMessage ?? DEFAULT_BUDGET_REJECTION)
+  }
+  const priorRefusal = (transition: ComponentWork<R, Result>, refused: ReadonlyArray<Refusal>): Intent<never> | undefined => {
+    if (transition.respond === undefined) return undefined
+    for (const refusal of refused) {
+      const completion = transition.respond(refusal.result)
+      if (completion.key === refusal.key) return completion
+    }
+    return undefined
   }
   const derived = (
     child: Child,
     trajectory: ReadonlyArray<Event>,
     log: ReadonlyArray<Event>,
-    refused: ReadonlyArray<Intent<never>>,
+    refused: ReadonlyArray<Refusal>,
     admitted: HashSet.HashSet<string>
   ) => {
     const children = child.output()
@@ -202,10 +212,17 @@ export const budget = <
       }), invocation === undefined ? {} : { invocation })
     }
     const position = eventPositionOf(log[log.length - 1] ?? { type: "Empty" }) ?? log.length
+    const recorded = new Set(log.map(transitionKeyOf).filter((key) => key !== undefined))
+    const refusals = new Map<string, Intent<never>>()
     const rejected: Array<Intent<never>> = []
     const selected = children.transitions.flatMap((transition): ReadonlyArray<ComponentWork<R, Result>> => {
-      const completion = refuse(transition, state)
-      if (completion !== undefined && refused.some((refusal) => refusal.key === completion.key)) return []
+      const prior = priorRefusal(transition, refused)
+      if (prior !== undefined) {
+        if (!recorded.has(prior.key)) refusals.set(prior.key, prior)
+        return []
+      }
+      const result = transition.respond === undefined ? undefined : rejection(state)
+      const completion = result === undefined ? undefined : transition.respond?.(result)
       if (transition.respond === undefined || HashSet.has(admitted, completion?.key ?? transition.key)) return [transition]
       if (completion !== undefined) rejected.push(completion)
       if (budgetPhase(trajectory) !== "spending") return []
@@ -220,9 +237,7 @@ export const budget = <
         used, `wall/${transition.key}`, invocation ?? null
       )]
     })
-    const recorded = new Set(log.map(transitionKeyOf).filter((key) => key !== undefined))
-    const refusals = refused.filter((transition) => !recorded.has(transition.key))
-    const wall = refusals.length > 0 && used > allowance && budgetPhase(trajectory) === "spending" && log.length > 0
+    const wall = refusals.size > 0 && used > allowance && budgetPhase(trajectory) === "spending" && log.length > 0
       ? [exhaustion(log[log.length - 1]!, used)] : []
     const head = turnHead(trajectory)
     const initial =
@@ -240,14 +255,14 @@ export const budget = <
         : []
     return {
       view: { ...(options.view?.(children.view, state) ?? children.view), ...state } as ChildView & BudgetState,
-      transitions: [...initial, ...wall, ...refusals, ...selected, ...rejected] as ReadonlyArray<ComponentWork<R, Result>>
+      transitions: [...initial, ...wall, ...refused.flatMap(({ key }) => refusals.get(key) ?? []), ...selected, ...rejected] as ReadonlyArray<ComponentWork<R, Result>>
     }
   }
 
   type BudgetMachineState = {
     readonly turns: TurnProjectionState
     readonly log: Chunk.Chunk<Event>
-    readonly refused: ReadonlyArray<Intent<never>>
+    readonly refused: ReadonlyArray<Refusal>
     // admitted preserves work accepted before later requests cross the limit (runtime/batches.test.ts).
     readonly admitted: HashSet.HashSet<string>
   }
@@ -259,17 +274,28 @@ export const budget = <
     const affordable = measured.used <= measured.limit
     for (const transition of output.transitions) {
       if (transition.respond === undefined) continue
-      const completion = refuse(transition, measured)
+      if (priorRefusal(transition, refused) !== undefined) continue
+      const result = rejection(measured)
+      const completion = result === undefined ? undefined : transition.respond(result)
       const key = completion?.key ?? transition.key
       if (HashSet.has(admitted, key) || refused.some(refusal => refusal.key === key)) continue
       if (affordable) admitted = HashSet.add(admitted, key)
-      else if (completion !== undefined) refused.push(completion)
+      else if (completion !== undefined && result !== undefined) refused.push({ key: completion.key, result })
     }
     return { ...state, refused, admitted }
   }
   const component = defineComponent<BudgetMachineState, ChildView & BudgetState, R, Result, typeof combined>({
     children: combined,
     name,
+    ...(options.result === undefined ? {} : { state: {
+      version: `1/${options.result.version}`,
+      schema: Schema.toCodecJson(Schema.Struct({
+        turns: TurnProjectionState,
+        log: Schema.Chunk(RecordedEvent),
+        refused: Schema.Array(Schema.Struct({ key: Schema.String, result: options.result.schema })),
+        admitted: Schema.HashSet(Schema.String)
+      }))
+    } }),
     initial: child => classify({
       turns: initialTurnProjection(),
       log: Chunk.empty<Event>(),

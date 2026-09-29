@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type { Intent } from "@clavia/tardigrade-core/intent"
 import { executionOnly } from "@clavia/tardigrade-core/transition/transition"
 import type { AuthorityComponent, AuthorityRequest } from "./authority"
@@ -36,6 +37,7 @@ const withRequests = <View extends object, R, Result, Input, Decision>(
   return component({
     name: `${child.name}.authority`,
     children,
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
     initial: () => undefined,
     step: (state) => state,
 

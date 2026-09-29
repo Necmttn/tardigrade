@@ -3,7 +3,7 @@ import { Self } from "../runtime/context"
 import type { TransitionContext } from "../transition/transition"
 import type { Event } from "../event"
 import { expect, expectTypeOf, test } from "bun:test"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref, Schema } from "effect"
 import { component } from "./machine"
 import { machineOf } from "./runtime"
 import { composeComponents } from "./composition/siblings"
@@ -50,4 +50,25 @@ test("runtime binds data once per reconciler activation", async () => {
     return yield* log.read
   }).pipe(Effect.provideService(Router, { send: () => Effect.void }), Effect.provideService(Self, { actor: "reader", instance: "main", thread: "root" })))
   expect(events.filter(event => event.type === "Read").map(event => event.label)).toEqual(["first", "first"])
+})
+
+
+test("checkpoint restore binds output dependencies without saving services or calling initial", () => {
+  const make = (restoring = false) => machineOf(component({
+    name: "counter", dependencies: [Catalog] as const,
+    state: { version: "1", schema: Schema.Finite },
+    initial: () => { if (restoring) throw new Error("restore called initial"); return 0 },
+    step: count => count + 1,
+    output: (count, _children, [catalog]) => ({ view: { count, label: catalog.label }, transitions: [] })
+  }))
+  const original = make()
+  const state = original.step(original.initial(Context.make(Catalog, { label: "first" })), { type: "Tick" })
+  const saved = JSON.parse(JSON.stringify(original.checkpoint!.encode(state)))
+  expect(saved).toEqual({ component: "counter", version: "1", state: 1 })
+  const fresh = make(true)
+  expect(() => fresh.checkpoint!.decode(saved)).toThrow("test/Catalog")
+  const restored = fresh.checkpoint!.decode(saved, Context.make(Catalog, { label: "second" }))
+  expect(fresh.output(restored).view).toEqual({ count: 1, label: "second" })
+  expect(fresh.output(fresh.step(restored, { type: "Tick" })).view).toEqual({ count: 2, label: "second" })
+  expect(original.output(state).view).toEqual({ count: 1, label: "first" })
 })

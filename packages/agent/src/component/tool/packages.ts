@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import { component, composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import type { KeyValueStore } from "effect/unstable/persistence"
@@ -27,6 +28,7 @@ export const tools = <const Cs extends ReadonlyArray<CodeComponent<unknown>>>(
   const adapted = component({
     name: "tools",
     children: scope,
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
     initial: () => undefined,
     step: state => state,
 

@@ -1,5 +1,5 @@
 import { calls, component as defineComponent, type ThreadTarget } from "@clavia/tardigrade-core/actor"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
@@ -13,9 +13,9 @@ import {
   initialTurnProjection,
   reduceTurnProjection,
   turnViewFrom,
-  type TurnProjectionState
+  TurnProjectionState
 } from "@clavia/tardigrade-code/execution/turn-projection"
-import { Chunk } from "effect"
+import { Chunk, Schema } from "effect"
 import { requestBudgetMethod } from "../../actor/budget"
 import { budgetRequested } from "../../log/events"
 import { type AgentComponent, type ToolOffer, type ToolInteractions, type AgentView } from "../view"
@@ -218,6 +218,7 @@ export const escalation = <R, Result>(
   const wrapped = defineComponent<State, AgentView & BudgetState, R | Router | Self, Result, typeof child, readonly [], ToolInteractions<R | Router | Self>>({
     children: child,
     name,
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Struct({ turns: TurnProjectionState, log: Schema.Chunk(RecordedEvent) })) },
     initial: () => ({ turns: initialTurnProjection(), log: Chunk.empty<Event>() }),
     step: (state, event) => ({
       turns: reduceTurnProjection(state.turns, event),
@@ -251,7 +252,7 @@ export const escalation = <R, Result>(
         },
         transitions: [...output.transitions, ...budgetCommunication(log, options.authority, budget)],
         interactions: {
-          tools: () => available ? [requestTool] : [],
+          tools: () => [requestTool],
           cancel: (cancellation) => child.output().interactions?.cancel?.(cancellation) ?? []
         }
       }

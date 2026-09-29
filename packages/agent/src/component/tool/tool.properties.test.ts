@@ -58,7 +58,7 @@ test("tool requests preserve routing and settlement through policy changes and r
                 act: () =>
                   Effect.sync(() => {
                     executions.push(identity(call))
-                    const result = { binding, value: call.arguments }
+                    const result = call.arguments
                     return [{ type: "ToolReturned", turn: call.turn, callId: call.callId, result }]
                   })
               })
@@ -107,7 +107,7 @@ test("tool requests preserve routing and settlement through policy changes and r
         if (requested.has(key)) return
         requested.add(key)
         pending.set(key, call)
-        append({ type: "ToolCalled", turn: call.turn, callId: call.callId, name: "read", arguments: value })
+        append({ type: "ToolCalled", turn: call.turn, callId: call.callId, name: "read", arguments: resultOf(call) })
       }
       const policy = (next: Mode) => {
         mode = next

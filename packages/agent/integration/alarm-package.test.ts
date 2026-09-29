@@ -19,7 +19,7 @@ for (const mode of ["code", "tools"] as const) {
       suppliedMessage = message
       const pkg = alarm({ onFired: alarm => message({ text: alarm.note }) })
       return [budget(mode === "code" ? codeMode([pkg]) : tools([pkg]), {
-        limit: 12, usage: () => 0, onExhausted: (reason, settle) => settle({ error: reason })
+        limit: 12, usage: () => 0, onExhausted: (reason) => ({ error: reason })
       }), nativeOutput]
     })
     expect(root.input.message).toBe(suppliedMessage)

@@ -29,7 +29,7 @@ const createBudget = () =>
     {
       limit: 1,
       usage: (observation) => observation.calls.length,
-      onExhausted: (reason, settle) => settle({ error: reason })
+      onExhausted: (reason) => ({ error: reason })
     }
   )
 const call = (callId: string, name = "read"): Event => ({

@@ -20,7 +20,7 @@ const SCOUT = output({
 
 const CODE = renderOf([codeMode(), nativeOutput], [])
 const budgetedCode = (log: ReadonlyArray<Event>) => renderOf([budget(codeMode(), {
-  onExhausted: (reason, settle) => settle({ error: reason }),
+  onExhausted: (reason) => ({ error: reason }),
   usage: (observation) => observation.calls.length,
   rejectionMessage: "Tool budget reached. Answer now with your best result.",
   view: (view, state) =>
@@ -362,7 +362,7 @@ describe("the tool surface decides the tool table", () => {
   ])
   const LAB = renderOf([lab, nativeOutput], [])
   const budgetedLab = (log: ReadonlyArray<Event>) => renderOf([budget(lab, {
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: (observation) => observation.calls.length,
     rejectionMessage: "Tool budget reached. Answer now with your best result.",
     view: (view, state) =>

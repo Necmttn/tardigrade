@@ -104,7 +104,7 @@ test.each([false, true])("Mortys inherit Rick's depth ceiling with background=%s
       methods: { message: agentMethods.message },
       components: [infer([escalate(
         budget(codeMode([agentsPackage({ maxDepth: ceiling })]), {
-          onExhausted: (reason, settle) => settle({ error: reason }),
+          onExhausted: reason => ({ error: reason }),
           usage: ({ calls }) => calls.length,
           rejectionMessage: "Tool budget reached. Answer now with your best result."
         }),
@@ -345,7 +345,7 @@ test.each([1, 2, 3, 4])("Rick and Morty survive generated portal, budget, permis
                 }
               }),
               {
-                onExhausted: (reason, settle) => settle({ error: reason }),
+                onExhausted: reason => ({ error: reason }),
                 usage: ({ permissions, calls }) => permissions.filter(permission => permission.status === "allowed" && permission.invocation?.id === calls[0]?.turn).length,
                 rejectionMessage: "Tool budget reached. Answer now with your best result."
               }
@@ -579,7 +579,7 @@ const cancelForegroundMortys = async ({ children, headroom, schedule }: {
               request: () => undefined
             }),
             {
-              onExhausted: (reason, settle) => settle({ error: reason }),
+              onExhausted: reason => ({ error: reason }),
               usage: ({ permissions, calls }) => permissions.filter(permission => permission.status === "allowed" && permission.invocation?.id === calls[0]?.turn).length,
               rejectionMessage: "Tool budget reached. Answer now with your best result."
             }
@@ -710,7 +710,7 @@ test("Rick settles when a foreground Morty is cancelled", async () => {
             request: () => undefined
           }),
           {
-            onExhausted: (reason, settle) => settle({ error: reason }),
+            onExhausted: reason => ({ error: reason }),
             usage: ({ permissions, calls }) => permissions.filter(permission => permission.status === "allowed" && permission.invocation?.id === calls[0]?.turn).length,
             rejectionMessage: "Tool budget reached. Answer now with your best result."
           }

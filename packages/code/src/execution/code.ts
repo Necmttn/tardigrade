@@ -1,9 +1,9 @@
 import { OperationScope } from "@clavia/tardigrade-core/runtime/context"
 import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-core/transition/transition"
-import { Clock, Deferred, Effect, Fiber } from "effect"
+import { Clock, Deferred, Effect, Fiber, Schema } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { component, composeComponents, type Component, type ComponentOutput, type ComponentResult, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { CODE_VIEW_ALGEBRA, type CodeComponent, type CodeView } from "../package/definition"
@@ -15,7 +15,7 @@ import {
   initialTurnProjection,
   reduceTurnProjection,
   turnTerminalFrom,
-  type TurnProjectionState
+  TurnProjectionState
 } from "./turn-projection"
 import {
   BARE_SPILL_NOTE,
@@ -297,6 +297,13 @@ export const codeExecution = <const Cs extends ReadonlyArray<CodeComponent<unkno
   const empty = codeExecutionProjection(policy, [])
   return component({
     name: "code.execution",
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Struct({
+      turns: TurnProjectionState,
+      dispatches: Schema.ReadonlyMap(Schema.String, RecordedEvent),
+      settled: Schema.ReadonlySet(Schema.String),
+      calls: Schema.ReadonlyMap(Schema.String, Schema.Struct({ execId: Schema.String })),
+      returned: Schema.ReadonlySet(Schema.String)
+    })) },
     children: scope,
     initial: child => {
       codeExecutionProjection(policy, child.output().view.packages)

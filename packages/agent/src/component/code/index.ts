@@ -1,9 +1,9 @@
 import { toolComponent, type ToolComponent, toolConcurrencyOf, toolDispatchMatches, type ToolConcurrency, type Answer, type PendingCall } from "../tool/machine"
 import type { KeyValueStore } from "effect/unstable/persistence"
-import { Chunk } from "effect"
+import { Chunk, Schema } from "effect"
 import { type Transition } from "@clavia/tardigrade-core/runtime"
 import { component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
 import { executionKeyOf, codeDispatched, codeKeys } from "@clavia/tardigrade-code/execution/events"
 import { codeExecution } from "@clavia/tardigrade-code/execution/code"
@@ -127,6 +127,7 @@ export const codeMode = <
   const component = defineComponent({
     children: combined,
     name: "code",
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Chunk(RecordedEvent)) },
     initial: () => Chunk.empty<Event>(),
     step: (state, event) => dynamicSystem === undefined ? state : Chunk.append(state, event),
 

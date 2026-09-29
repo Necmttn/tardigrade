@@ -245,9 +245,9 @@ describe("agent projection refinement", () => {
       const complete = inferenceFromHistory(INFER_OPTIONS, render, testModelLock())
       const incremental = inferenceMachine(INFER_OPTIONS)
       let rendered = renderProjection.initial(testModelData)
-      let state = incremental.initial(testModelLock())
+      let state = incremental.initial()
       for (let length = 0; length <= log.length; length++) {
-        expect(observableTransitions(incremental.output(state, { rendered: renderProjection.output(rendered) }) as ReadonlyArray<Transition<never, unknown>>))
+        expect(observableTransitions(incremental.output(state, { lock: testModelLock(), rendered: renderProjection.output(rendered) }) as ReadonlyArray<Transition<never, unknown>>))
           .toEqual(observableTransitions(complete(log.slice(0, length)) as ReadonlyArray<Transition<never, unknown>>))
         const event = log[length]
         if (event !== undefined) {
@@ -286,7 +286,7 @@ describe("agent projection refinement", () => {
       const components = [
         system("You are the refinement agent."),
         budget(codeMode(), {
-          onExhausted: (reason, settle) => settle({ error: reason }),
+          onExhausted: (reason) => ({ error: reason }),
           usage: (observation) => observation.calls.length,
           rejectionMessage: "Tool budget reached. Answer now with your best result.",
           view: (view, state) =>

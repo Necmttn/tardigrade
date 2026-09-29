@@ -66,7 +66,7 @@ export default actor({
     budget(repositoryTools, {
       limit: 20,
       usage: ({ calls }) => calls.length,
-      onExhausted: (reason, settle) => settle({ error: reason }),
+      onExhausted: (reason) => ({ error: reason }),
       view: (view, budget) => budget.phase === "spending" ? view : { ...view, tools: [] }
     }),
     compact(messages(), { triggerRatio: 0.8, retainRatio: 0.5 }),

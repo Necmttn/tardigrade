@@ -55,7 +55,7 @@ const assembled = <R>(component: AgentComponent<R>) => actor({
 // and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
   assembled(infer([budget(codeMode(packages), {
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: (observation) => observation.calls.length,
     rejectionMessage: "Tool budget reached. Answer now with your best result.",
     view: (view, state) =>
@@ -512,7 +512,7 @@ const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
   assembled(infer([budget(codeMode(), {
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: (observation) => observation.calls.length,
     rejectionMessage: "Tool budget reached. Answer now with your best result.",
     view: (view, state) =>
@@ -1024,7 +1024,7 @@ describe("the mind on a native surface", () => {
 
 describe("the validate-once implementation", () => {
   const validateOnceAgent = assembled(infer([budget(codeMode(), {
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: (observation) => observation.calls.length,
     rejectionMessage: "Tool budget reached. Answer now with your best result.",
     view: (view, state) =>

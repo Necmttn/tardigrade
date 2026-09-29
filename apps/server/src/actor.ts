@@ -56,7 +56,7 @@ const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
               fetchPackage()
             ]),
             {
-              onExhausted: (reason, settle) => settle({ error: reason }),
+              onExhausted: (reason) => ({ error: reason }),
               usage: (observation) => observation.calls.length,
               rejectionMessage: "Tool budget reached. Answer now with your best result."
             }

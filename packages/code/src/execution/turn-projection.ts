@@ -1,5 +1,5 @@
-import { Chunk, HashMap, HashSet, Option } from "effect"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { Chunk, HashMap, HashSet, Option, Schema } from "effect"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { eventEpochOf, turnOf } from "./turns"
 
 interface TurnRecord {
@@ -178,3 +178,18 @@ export const turnTerminalAtFrom = (state: TurnProjectionState, turn: string, epo
     Option.getOrElse(HashMap.get(state.turns, turn), emptyTurn).terminals,
     epoch
   ))
+
+export const TurnProjectionState = Schema.Struct({
+  nextHead: Schema.Int,
+  heads: Schema.HashMap(Schema.String, Schema.Struct({ event: RecordedEvent, order: Schema.Int })),
+  open: Schema.HashMap(Schema.String, Schema.Int),
+  turns: Schema.HashMap(Schema.String, Schema.Struct({
+    events: Schema.Chunk(RecordedEvent),
+    failed: Schema.HashSet(Schema.Int),
+    resumed: Schema.HashSet(Schema.Int),
+    terminals: Schema.HashMap(Schema.Int, RecordedEvent),
+    epoch: Schema.Int
+  })),
+  served: Schema.HashSet(Schema.String),
+  trajectory: Schema.Chunk(RecordedEvent)
+})

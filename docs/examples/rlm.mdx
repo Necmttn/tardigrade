@@ -48,7 +48,7 @@ const rlm = actor({
         ]), {
           limit: 40,
           usage: ({ calls }) => calls.length,
-          onExhausted: (reason, settle) => settle({ error: reason })
+          onExhausted: (reason) => ({ error: reason })
         }),
         { authority: caller(), requests: { decide: request => request.grant() } }
       ),

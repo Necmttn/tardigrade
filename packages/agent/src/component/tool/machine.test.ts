@@ -118,12 +118,12 @@ test("a parent's final tool view determines which requests were offered", () => 
   )
 })
 
-test("an owned dynamic tool retains the binding offered before its view changes", () => {
+test("an accepted call uses its current handler after the tool becomes hidden", () => {
   const offer: ToolOffer = {
     spec: { name: "read", description: "once", inputSchema: {} },
     serve: (_call, _log, answer) => [answer("original")]
   }
-  const child = toolComponent(
+  const make = (registered = true) => toolComponent(
     component({
       name: "dynamic",
       initial: () => false,
@@ -131,16 +131,22 @@ test("an owned dynamic tool retains the binding offered before its view changes"
       output: (hidden) => ({
         transitions: [],
         view: { ...AGENT_VIEW_ALGEBRA.empty, tools: hidden ? [] : [{ spec: offer.spec }] },
-        interactions: { tools: () => (hidden ? [] : [offer]) }
+        interactions: { tools: (): ReadonlyArray<ToolOffer> => hidden && !registered ? [] : [{ ...offer, serve: (_call, _log, answer) => [answer(hidden ? "current" : "original")] }] }
       })
     })
   )
+  const child = make()
   const log = [head, { type: "ModelCalled", callId: "model", turn: "turn" }, called("a")]
   const output = replayProjection(machineOf(child), log)
   expect(output.view.tools).toEqual([])
   expect(eventsOf(output.transitions)).toContainEqual(
-    expect.objectContaining({ type: "ToolReturned", result: "original" })
+    expect.objectContaining({ type: "ToolReturned", result: "current" })
   )
+  const settled = [...log, ...eventsOf(output.transitions)]
+  expect(replayProjection(machineOf(child), settled).transitions).toEqual([])
+  const later = [...settled, { type: "ModelCalled", callId: "later", turn: "turn" }, called("b")]
+  expect(replayProjection(machineOf(child), later).transitions).toEqual([])
+  expect(() => replayProjection(machineOf(make(false)), log)).toThrow('Missing handler for accepted tool "read"')
 })
 
 const enabled: typeof enabledWithoutData = (actor, events, data = testModelData) =>

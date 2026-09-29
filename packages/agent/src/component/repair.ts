@@ -1,5 +1,7 @@
+import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import {
+  TurnProjectionState,
   initialTurnProjection,
   reduceTurnProjection,
   turnViewFrom
@@ -58,6 +60,7 @@ export const outputRepairFor = (policy: Partial<RepairPolicy> = {}): OutputFallb
   const fallback = repairFallback(policy)
   return defineOutputFallback(component({
     name: "output.repair",
+    state: { version: "1", schema: Schema.toCodecJson(TurnProjectionState) },
     initial: initialTurnProjection,
     step: reduceTurnProjection,
     output: (state) => ({
@@ -81,6 +84,7 @@ export const VALIDATE_ONCE_FALLBACK: OutputFallback = { kind: "local", name: "va
 // outputValidateOnce contributes one local validation and its contract instruction (turn.test.ts, "the validate-once implementation").
 export const outputValidateOnce: OutputFallbackComponent = defineOutputFallback(component({
   name: "output.validate-once",
+  state: { version: "1", schema: Schema.toCodecJson(TurnProjectionState) },
   initial: initialTurnProjection,
   step: reduceTurnProjection,
   output: (state) => ({

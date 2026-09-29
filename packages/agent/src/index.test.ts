@@ -111,7 +111,7 @@ const rlm = (
     name: "test-agent",
     methods: agentMethods,
     components: [infer([budget(components, {
-      onExhausted: (reason, settle) => settle({ error: reason }),
+      onExhausted: (reason) => ({ error: reason }),
       usage: ({ children }) => children.reduce((used, observation) => used + observation.calls.length, 0),
       rejectionMessage: "Tool budget reached. Answer now with your best result.",
       view: (view, state) =>

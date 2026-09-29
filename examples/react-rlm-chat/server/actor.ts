@@ -19,7 +19,7 @@ export default actor({
       system(actorInstructions),
       escalate(
         budget(codeMode([fetch(), agents({ maxDepth: 2 }), workspace()]), {
-          onExhausted: (reason, settle) => settle({ error: reason }),
+          onExhausted: (reason) => ({ error: reason }),
           usage: (observation) => observation.calls.length,
           rejectionMessage: "Tool budget reached. Answer now with your best result."
         }),

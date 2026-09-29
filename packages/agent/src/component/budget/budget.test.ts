@@ -38,7 +38,7 @@ test.each([0, 2])("initial admission survives later usage and replay (initial us
     step: (_state, event) => Number(event.used ?? used),
     output: used => ({ view: { used }, transitions: [work] })
   })
-  const machine = machineOf(budget(child, { limit: 1, usage: ({ used }) => used, onExhausted: (reason, respond) => respond({ error: reason }) }))
+  const machine = machineOf(budget(child, { limit: 1, usage: ({ used }) => used, onExhausted: (reason) => ({ error: reason }) }))
   const key = used <= 1 ? work.key : responseKey
   expect(machine.output(machine.initial()).transitions.map(work => work.key)).toContain(key)
   const log = [{ type: "UsageRecorded", used: used <= 1 ? 2 : 0 }]
@@ -56,7 +56,7 @@ const assembled = <R>(component: import("../infer/index").AgentComponent<R>) =>
   })
 
 const toolBudgetOptions = {
-  onExhausted: (reason, settle) => settle({ error: reason }),
+  onExhausted: (reason) => ({ error: reason }),
   usage: (observation) => observation.calls.length,
   rejectionMessage: "Tool budget reached. Answer now with your best result.",
   view: (view, state) =>
@@ -71,10 +71,10 @@ const toolBudgetOptions = {
 
 test("multiple limits reject empty rules and untargeted grants", () => {
   const child = tool({ spec: { name: "read", description: "Read", inputSchema: {} }, run: () => Effect.succeed("done") })
-  expect(() => budget(child, { limits: [], onExhausted: (reason, respond) => respond({ error: reason }) })).toThrow("at least one rule")
+  expect(() => budget(child, { limits: [], onExhausted: (reason) => ({ error: reason }) })).toThrow("at least one rule")
   const governed = budget(child, {
     limits: [{ limit: 1, usage: ({ calls }) => calls.length }],
-    onExhausted: (reason, respond) => respond({ error: reason })
+    onExhausted: (reason) => ({ error: reason })
   })
   expect(() => governed.budget.grant(1, { callId: "grant", turn: "turn" }, 0)).toThrow("single usage rule")
 })
@@ -415,7 +415,7 @@ test("rejection preserves committed child events and unrelated sibling work", ()
   })
   const governed = budget(children, {
     limit: 1,
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: (observation) => observation.calls.length
   })
   const log: ReadonlyArray<Event> = [
@@ -458,7 +458,7 @@ test("committed usage is retained even when no operation can be refused", () => 
   })
   const governed = budget(child, {
     limit: 1,
-    onExhausted: (reason, settle) => settle({ error: reason }),
+    onExhausted: (reason) => ({ error: reason }),
     usage: ({ used }) => used
   })
   const state = replayState(machineOf(governed), [{ type: "UsageRecorded", amount: 2 }])
@@ -509,10 +509,7 @@ test("budget options adapt a non-tool operation and its typed result", () => {
   const governed = budget(child, {
     limit: 1,
     usage: (observation) => observation.count,
-    onExhausted: (reason, settle) => {
-      expectTypeOf<Parameters<typeof settle>[0]>().toEqualTypeOf<{ readonly failure: string }>()
-      return settle({ failure: reason })
-    }
+    onExhausted: reason => ({ failure: reason })
   })
   const output = machineOf(governed).output(replayState(machineOf(governed), [
     { type: "MessageReceived", id: "turn", text: "go", budget: 1 },

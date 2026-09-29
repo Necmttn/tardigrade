@@ -320,3 +320,52 @@ const searchTool = (
   })
 })
 ```
+
+## State schemas and checkpoints
+
+A component can declare a synchronous state codec and a compatibility version:
+
+```ts
+const counter = component({
+  name: "counter",
+  state: { version: "1", schema: Schema.Finite },
+  initial: () => 0,
+  step: (count, event) => event.type === "Tick" ? count + 1 : count,
+  output: (count) => ({ view: { count }, transitions: [] })
+})
+```
+
+The internal component machine encodes private state with its component name and version. Decoding validates that identity and the state schema, then recomputes output without calling `initial`. Change the version when the stored representation or component behavior becomes incompatible. The codec must preserve every value needed by future reducers and outputs; declaring a schema does not establish replay equivalence by itself.
+
+Checkpoint-plus-tail equivalence is exercised in `packages/core/src/component/checkpoint.test.ts` through JSON serialization and fresh component construction at every generated log cut. Tail events retain their original log positions. The test compares encoded state, views, and pending intent keys and payloads with full replay.
+
+State declarations describe private state for both leaves and parents. The internal machine exposes checkpoint encoding and restore only for leaves; a parent declaration does not enable recovery of its children. Actor recovery and host persistence require separate support. A component holding live services, transition contexts, or executable callbacks in private state needs its state ownership investigated before declaring a codec.
+
+Built-in agent components declare versioned codecs for their private data. Event codecs retain original log positions alongside event payloads, since reply identities depend on those positions. Compaction and inference read model services from runtime data; permission and tool outputs rebuild contexts from retained events. These declarations do not yet enable restoring a composed agent.
+
+A custom `SystemProjection` can supply its own `state: { version, schema }`. A `budget` wrapper accepts `result: { version, schema }` for its user-defined rejection result; its state version includes that result version. Without the supplied codec, these generic components have no state declaration. The codec must cover every result returned by `onExhausted`.
+
+Declared `dependencies` are supplied to both `initial(children, data)` and `output(state, children, data)`. The runtime binds these services once per initialization or restore and keeps them outside encoded private state. Output reads the fresh runtime's services after restore. Equivalent replay and restored output require compatible dependency configuration.
+
+## Tool visibility and handlers
+
+`view.tools` declares which tools may receive new model calls. `interactions.tools()` supplies the owner's handlers for accepted calls, including tools absent from the current view. Keep those handlers available until their accepted calls settle. For example, budget escalation hides `request_budget` after a grant while its handler still emits the result for the pending request.
+
+The router retains offered names and concurrency values as data and resolves handlers from the current owner output. It does not retain offered handler closures. Parameters that must survive later configuration changes belong in durable call data. An accepted call whose handler is missing fails explicitly; a matching `ToolReturned` removes the pending call and requires no handler lookup.
+
+`output` also receives a fourth argument with `context.transition(event)`. It rebuilds transition helpers from a positioned event using the current component identity and runtime interaction scopes. Store the originating event and its log position as data, then use `eventAt(event, position)` when restoring that event for output. Tool handlers still receive `call.context`, but the router constructs it for output instead of retaining it in call state.
+
+The state audit covers agent components, message-input validation, and the code/package components they mount:
+
+| Component | Private state | Runtime behavior |
+| --- | --- | --- |
+| Inference and compaction | Turns, failures, usage totals; compaction has no private data | Model services arrive through dependencies |
+| Tool routing | Calls, offers, events, positions | Current handlers and rebuilt transition contexts |
+| Budget | Admission identities and rejection results | Current responders |
+| Permissions | Request subjects, invocations, originating events | Rebuilt escalation contexts |
+| Messages, repair, and system instructions | Event collections and projection indexes | Configured rendering functions |
+| Authority and message validation | Pending requests or invalid events | Decision policies and rebuilt reply contexts |
+| Code execution and packages | Dispatches, calls, completion identities, events | Sandbox and package implementations |
+| Alarm notifications | Events | Rebuilt firing contexts and configured interaction |
+
+Composition caches contain derived outputs and interaction functions. They belong to runtime reconstruction rather than the private-state schemas above. Core actor recovery, including the thread supervisor's retained transition contexts and actor-method projection codecs, remains outside this agent-component audit.

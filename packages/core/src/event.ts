@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Schema, SchemaGetter } from "effect"
 
 /**
  * Event is the smallest data primitive in Tardigrade
@@ -23,3 +23,15 @@ export const eventAt = (event: Event, seq: number): Event => {
 
 // eventPositionOf reads the position supplied by full-log replay or incremental reconciliation.
 export const eventPositionOf = (event: Event): number | undefined => positions.get(event)
+
+// RecordedEvent preserves log position across JSON encoding for event-owned transitions (component/checkpoint.test.ts).
+export const RecordedEvent = Schema.Struct({
+  event: Schema.toCodecJson(Event),
+  position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)))
+}).pipe(Schema.decodeTo(Schema.declare<Event>(Schema.is(Event)), {
+  decode: SchemaGetter.transform(({ event, position }) => position === undefined ? event : eventAt(event, position)),
+  encode: SchemaGetter.transform(event => {
+    const position = eventPositionOf(event)
+    return { event, ...(position === undefined ? {} : { position }) }
+  })
+}))

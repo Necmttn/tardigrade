@@ -1,10 +1,11 @@
+import { Schema } from "effect"
 import { checkedTools, renderView } from "./view"
 export type { Rendered } from "./view"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { messages } from "../messages"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentView } from "../view"
 import { turnViewFrom, trajectoryFrom } from "@clavia/tardigrade-code/execution/turn-projection"
-import { emptyUsageCostFold, foldUsageCost, usageCostOf, usageIn } from "../../model/usage"
+import { UsageCostFold, emptyUsageCostFold, foldUsageCost, usageCostOf, usageIn } from "../../model/usage"
 export { AGENT_VIEW_ALGEBRA, type AgentView, type AgentComponent, type AgentTool, type ContextFragment, type NativeOutputFragment, type FallbackOutputFragment, type OutputFragment } from "../view"
 import { composeComponents, handles, interactionScope, component as defineComponent, type InteractionRequest, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
@@ -12,7 +13,7 @@ import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-messag
 import { fallbackOf } from "../../output/contract"
 import { agentKeys } from "../../log/events"
 import type { InferPolicy } from "./contract"
-import { inferenceMachine, type InferRejection } from "./machine"
+import { IncrementalInferState, inferenceMachine, type InferRejection } from "./machine"
 export type { InferRejection } from "./machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../../model/access"
 import { routeTools, toolConcurrencyOf, type ToolConcurrency } from "../tool/machine"
@@ -33,6 +34,7 @@ export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFal
   const wrapped = defineComponent({
     name: `${component.name}.fallback`,
     children: component,
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Undefined) },
     initial: () => undefined,
     step: state => state,
 
@@ -113,15 +115,17 @@ export const infer = <
   const root = defineComponent({
     children: [routing, messages({ name: "infer.messages" })] as const,
     name: "infer",
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Struct({ ...IncrementalInferState.fields, lifetime: UsageCostFold })) },
     input: inputs,
     dependencies: [ModelLock] as const,
-    initial: (_children, [lock]) => ({ ...inference.initial(lock), lifetime: emptyUsageCostFold }),
+    initial: () => ({ ...inference.initial(), lifetime: emptyUsageCostFold }),
     // step folds the lifetime cost once per event; output reads the trajectory only when the fold is stale (usage.test.ts, "foldUsageCost").
     step: (state, event) => ({ ...inference.step(state, event), lifetime: foldUsageCost(state.lifetime, event) }),
 
-    output: (state, [child, fallback]) => {
+    output: (state, [child, fallback], [lock]) => {
       const children = child.output()
       const inferred = inference.output(state, {
+        lock,
         rendered: renderView(children.view, toolConcurrency, fallback.output().view.messages?.[0], children.transitions)
       })
       const compactions = new Set(children.view.messages?.flatMap(conversation => conversation.compaction?.proposals ?? []) ?? [])

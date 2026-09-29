@@ -89,7 +89,7 @@ describe("lintActor", () => {
         name: "researcher",
         methods: agentMethods,
         components: [
-          infer([escalate(budget(codeMode(), { onExhausted: (reason, settle) => settle({ error: reason }), usage: observation => observation.calls.length }), { authority: caller() }), nativeOutput], {
+          infer([escalate(budget(codeMode(), { onExhausted: (reason) => ({ error: reason }), usage: observation => observation.calls.length }), { authority: caller() }), nativeOutput], {
             models: {
               default: { provider: "test", model_id: "test" },
               allow: "*"

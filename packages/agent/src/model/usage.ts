@@ -1,5 +1,5 @@
 import { HashMap, HashSet, Option, Schema } from "effect"
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import { turnOf } from "@clavia/tardigrade-code/execution/turns"
 
 // Usage is what one model attempt spent. The normalized fields support projections, while
@@ -345,3 +345,14 @@ export const usageCostOf = (fold: UsageCostFold): { readonly reportedCostUsd: nu
     : fold.parts === 0
       ? { reportedCostUsd: ZERO_USAGE.reportedCostUsd, estimatedCostUsd: ZERO_USAGE.estimatedCostUsd }
       : { reportedCostUsd: fold.reportedCostUsd, estimatedCostUsd: fold.estimatedCostUsd }
+
+export const UsageCostFold = Schema.Struct({
+  called: Schema.HashMap(Schema.String, RecordedEvent),
+  unpriced: Schema.HashSet(Schema.String),
+  carried: Schema.Boolean,
+  excluded: Schema.Boolean,
+  parts: Schema.Int,
+  reportedCostUsd: Schema.UndefinedOr(Schema.Finite),
+  estimatedCostUsd: Schema.UndefinedOr(Schema.Finite),
+  stale: Schema.Boolean
+})

@@ -1,6 +1,6 @@
-import type { Event } from "@clavia/tardigrade-core/log/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import type { Projection } from "@clavia/tardigrade-core/projection"
-import { Chunk, HashMap, HashSet, Option } from "effect"
+import { Chunk, HashMap, HashSet, Option, Schema } from "effect"
 import { modeOf, projectsHistory } from "../output/contract"
 
 // TranscriptProjectionState retains model-visible events and the provisional repair entries that a completion may hide.
@@ -139,3 +139,14 @@ export const projectedOutput = (events: ReadonlyArray<Event>): ReadonlyArray<Eve
   const projection = transcriptProjection()
   return projection.output(events.reduce(projection.step, projection.initial())).events
 }
+
+export const TranscriptProjectionState = Schema.Struct({
+  events: Schema.Chunk(RecordedEvent),
+  hidden: Schema.HashSet(Schema.Int),
+  members: Schema.HashMap(Schema.String, Schema.HashSet(Schema.Int)),
+  weights: Schema.HashMap(Schema.Int, Schema.Finite),
+  projectable: Schema.HashMap(Schema.String, Schema.String),
+  attemptsByTurn: Schema.HashMap(Schema.String, Schema.HashSet(Schema.String)),
+  completedTurns: Schema.HashSet(Schema.String),
+  visibleWeight: Schema.Finite
+})

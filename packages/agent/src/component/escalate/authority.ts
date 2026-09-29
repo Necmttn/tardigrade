@@ -1,4 +1,4 @@
-import { Chunk, HashMap, HashSet } from "effect"
+import { Chunk, HashMap, HashSet, Schema } from "effect"
 import {
   calls,
   component,
@@ -9,7 +9,7 @@ import {
   type ActorMethodOutput,
   type Component
 } from "@clavia/tardigrade-core/actor"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { RecordedEvent, type Event } from "@clavia/tardigrade-core/event"
 import type { Intent } from "@clavia/tardigrade-core/intent"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
@@ -97,6 +97,7 @@ export function authorityComponent<M extends ActorMethods, N extends Extract<key
   }
   const authority = component({
     name: definition.name,
+    state: { version: "1", schema: Schema.toCodecJson(Schema.Struct({ pending: Schema.HashMap(Schema.String, Schema.Struct({ order: Schema.Int, event: RecordedEvent })), settled: Schema.HashSet(Schema.String), log: Schema.Chunk(RecordedEvent), next: Schema.Int })) },
     initial: (): State => ({ pending: HashMap.empty(), settled: HashSet.empty(), log: Chunk.empty(), next: 0 }),
     step: (state, event): State => {
       const log = options?.delegate === undefined ? state.log : Chunk.append(state.log, event)

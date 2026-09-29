@@ -18,7 +18,7 @@ const definition = (limit: number) => actor({
   }), {
     limit,
     usage: ({ estimatedCostUsd }) => estimatedCostUsd ?? (limit + 1),
-    onExhausted: (reason, respond) => respond({ error: reason })
+    onExhausted: (reason) => ({ error: reason })
   })]
 })
 const policy: RequestPolicy = {
@@ -111,9 +111,9 @@ test("turn and lifetime limits both govern inference across turns and restart", 
       }), {
         limits: [
           { limit: 0.03, usage: ({ cost }) => cost.turn.estimatedCostUsd ?? 1, rejectionMessage: "Turn limit reached." },
-          { limit: 0.05, usage: ({ cost }) => cost.lifetime.estimatedCostUsd ?? 1, onExhausted: (_reason, respond) => respond({ error: "Lifetime limit reached." }) }
+          { limit: 0.05, usage: ({ cost }) => cost.lifetime.estimatedCostUsd ?? 1, onExhausted: (_reason) => ({ error: "Lifetime limit reached." }) }
         ],
-        onExhausted: (reason, respond) => respond({ error: reason })
+        onExhausted: (reason) => ({ error: reason })
       })]
     }),
     layersFor: () => testInferenceLayer({
