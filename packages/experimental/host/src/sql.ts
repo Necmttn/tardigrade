@@ -1,19 +1,8 @@
-import { Crypto, Effect, Encoding, ManagedRuntime, PlatformError, type Layer } from "effect"
+import { Effect, Encoding, ManagedRuntime, Result, type Layer } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { RuntimeError, type Journal, type Recorded, type StoredCheckpoint } from "@clavia/tardigrade-experimental-core"
 
-const base64Encode = (bytes: Uint8Array): string => {
-  let text = ""
-  for (const byte of bytes) text += String.fromCharCode(byte)
-  return btoa(text)
-}
-
-const base64Decode = (value: string): Uint8Array => {
-  const text = atob(value)
-  const bytes = new Uint8Array(text.length)
-  for (let index = 0; index < text.length; index++) bytes[index] = text.charCodeAt(index)
-  return bytes
-}
+import { checkpointDigest } from "./services/checkpoint"
 
 // sqlJournal stores event prefixes through an Effect SQL layer; close releases its resources.
 export function sqlJournal<Event extends object>(options: {
@@ -32,11 +21,26 @@ export function sqlJournal<Event extends object>(options: {
   const initialized = Effect.runSync(Effect.cached(runtime.contextEffect.pipe(Effect.flatMap(context => setup.pipe(Effect.provide(context))))))
   let closed = false
   const client = Effect.suspend(() => closed ? Effect.fail(new RuntimeError("Journal is closed")) : initialized)
-  const crypto = Crypto.make({
-    randomBytes: size => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-    digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
+  const append = (expectedLength: number, events: readonly Recorded<Event>[], checkpoint?: StoredCheckpoint) => Effect.gen(function* () {
+    if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal length"))
+    if (checkpoint && (!Number.isSafeInteger(checkpoint.position) || checkpoint.position !== expectedLength + events.length || checkpoint.position < 0)) return yield* Effect.fail(new RuntimeError("Invalid checkpoint position"))
+    const encoded = yield* Effect.try({ try: () => events.map(event => JSON.stringify(event)), catch: RuntimeError.from })
+    if (checkpoint && checkpoint.digest !== (yield* checkpointDigest(checkpoint.payload))) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
+    const sql = yield* client
+    yield* sql.withTransaction(Effect.gen(function* () {
+      const rows = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM experimental_events WHERE actor = ${options.actor}`
+      const count = rows[0]?.count
+      if (count !== expectedLength) return yield* Effect.fail(new RuntimeError(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
+      for (const [index, event] of encoded.entries()) {
+        yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event})`
+      }
+      if (checkpoint) {
+        const payload = Encoding.encodeBase64(checkpoint.payload)
+        yield* sql`INSERT INTO experimental_checkpoints (actor, position, payload, digest) VALUES (${options.actor}, ${checkpoint.position}, ${payload}, ${checkpoint.digest}) ON CONFLICT(actor) DO UPDATE SET position = excluded.position, payload = excluded.payload, digest = excluded.digest`
+      }
+    }))
+    if (options.flush) yield* options.flush
   })
-  const digest = (payload: Uint8Array) => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex))
   return {
     read: Effect.gen(function* () {
       const sql = yield* client
@@ -58,50 +62,19 @@ export function sqlJournal<Event extends object>(options: {
         return JSON.parse(row.event) as Recorded<Event>
       }), catch: RuntimeError.from })
     }),
-    append: (expectedLength, events) => Effect.gen(function* () {
-      if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal length"))
-      const encoded = yield* Effect.try({ try: () => events.map(event => JSON.stringify(event)), catch: RuntimeError.from })
-      const sql = yield* client
-      yield* sql.withTransaction(Effect.gen(function*() {
-        const rows = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM experimental_events WHERE actor = ${options.actor}`
-        const count = rows[0]?.count
-        if (count !== expectedLength) return yield* Effect.fail(new RuntimeError(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
-        for (const [index, event] of encoded.entries()) {
-          yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event})`
-        }
-      }))
-      if (options.flush) yield* options.flush
-    }),
+    append,
     readCheckpoint: Effect.gen(function* () {
       const sql = yield* client
       const rows = yield* sql<{ position: number; payload: string; digest: string }>`SELECT position, payload, digest FROM experimental_checkpoints WHERE actor = ${options.actor}`
       const row = rows[0]
       if (!row) return undefined
       if (!Number.isSafeInteger(row.position) || row.position < 0 || typeof row.payload !== "string" || typeof row.digest !== "string") return yield* Effect.fail(new RuntimeError("Invalid journal checkpoint"))
-      const payload = base64Decode(row.payload)
-      const actualDigest = yield* digest(payload).pipe(Effect.mapError(RuntimeError.from))
+      const payload = yield* Result.match(Encoding.decodeBase64(row.payload), { onFailure: cause => Effect.fail(RuntimeError.from(cause)), onSuccess: Effect.succeed })
+      const actualDigest = yield* checkpointDigest(payload)
       if (actualDigest !== row.digest) return yield* Effect.fail(new RuntimeError("Journal checkpoint digest mismatch"))
       return { position: row.position, payload, digest: row.digest } satisfies StoredCheckpoint
     }),
-    appendWithCheckpoint: (expectedLength, events, checkpoint) => Effect.gen(function* () {
-      if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) return yield* Effect.fail(new RuntimeError("Invalid expected journal length"))
-      if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position !== expectedLength + events.length || checkpoint.position < 0) return yield* Effect.fail(new RuntimeError("Invalid checkpoint position"))
-      const encoded = yield* Effect.try({ try: () => events.map(event => JSON.stringify(event)), catch: RuntimeError.from })
-      const payload = base64Encode(checkpoint.payload)
-      const digestValue = yield* digest(checkpoint.payload).pipe(Effect.mapError(RuntimeError.from))
-      if (checkpoint.digest !== digestValue) return yield* Effect.fail(new RuntimeError("Invalid checkpoint digest"))
-      const sql = yield* client
-      yield* sql.withTransaction(Effect.gen(function*() {
-        const rows = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM experimental_events WHERE actor = ${options.actor}`
-        const count = rows[0]?.count
-        if (count !== expectedLength) return yield* Effect.fail(new RuntimeError(`Journal conflict for ${options.actor}: expected ${expectedLength}, found ${String(count)}`))
-        for (const [index, event] of encoded.entries()) {
-          yield* sql`INSERT INTO experimental_events (actor, seq, event) VALUES (${options.actor}, ${expectedLength + index}, ${event})`
-        }
-        yield* sql`INSERT INTO experimental_checkpoints (actor, position, payload, digest) VALUES (${options.actor}, ${checkpoint.position}, ${payload}, ${digestValue}) ON CONFLICT(actor) DO UPDATE SET position = excluded.position, payload = excluded.payload, digest = excluded.digest`
-      }))
-      if (options.flush) yield* options.flush
-    }),
+    appendWithCheckpoint: append,
     close: Effect.sync(() => { closed = true }).pipe(Effect.andThen(runtime.disposeEffect)),
   }
 }

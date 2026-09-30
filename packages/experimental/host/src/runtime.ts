@@ -66,7 +66,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let snapshot: ReturnType<typeof definition.replay>
     const localRecovery = new Map<string, ReturnType<typeof snapshot.deferred>[number]>()
     const source = createEventSource<Recorded<Event>>()
-    const bindings = atom<ReadonlyMap<object, import("@clavia/tardigrade-experimental-core").EffectRef>>(new Map())
+    const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
     let checkpointSeed: EffectCheckpoint | undefined
     let checkpointPosition = 0
     const checkpointPolicy = options.checkpoint ?? DEFAULT_CHECKPOINT_POLICY
@@ -78,15 +78,13 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (payload.byteLength > checkpointMaxBytes) throw new RuntimeError(`Checkpoint exceeds maxBytes ${checkpointMaxBytes}`)
       return payload
     }
-    let lifecycleEffect: ((ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled } | undefined) | undefined
-    let lifecyclePromise: ((ref: EffectRef) => PromiseSettled | undefined) | undefined
     const store = createStore(Context.make(EventLog, {
       events: source.events,
       bindings,
       position: () => checkpointSeed?.position ?? 0,
       durable: () => checkpointSeed ? new Map(checkpointSeed.durable.map(entry => [entry.name, entry] as const)) : undefined,
-      effect: ref => lifecycleEffect?.(ref),
-      promise: ref => lifecyclePromise?.(ref),
+      effect: ref => snapshot?.effect(ref),
+      promise: ref => snapshot?.promise(ref),
     }))
     const sync = () => {
       const position = store.get(source.events).length
@@ -123,23 +121,21 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const records = next.events.slice(snapshot.events.length)
       const eligible = checkpointPolicy.mode === "quiescent" || (checkpointPolicy.mode === "threshold" && next.position - checkpointPosition >= checkpointPolicy.options.everyEvents)
       const checkpoint = options.journal && eligible ? next.checkpoint() : undefined
-      if (options.journal && checkpoint) yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from }).pipe(
-        Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => options.journal!.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest })))),
-        Effect.catchCause(cause => {
+      if (options.journal) {
+        const journal = options.journal
+        const persistence = checkpoint
+          ? Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from }).pipe(
+            Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => journal.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest })))),
+          )
+          : journal.append(snapshot.position, records)
+        yield* persistence.pipe(Effect.catchCause(cause => {
           definition.discard(next)
           persistenceFailure = new RuntimeError("Journal commit failed; reopen the actor before continuing", { cause })
           return Effect.fail(persistenceFailure)
-        }),
-      )
-      else if (options.journal) yield* options.journal.append(snapshot.position, records).pipe(Effect.catchCause(cause => {
-        definition.discard(next)
-        persistenceFailure = new RuntimeError("Journal commit failed; reopen the actor before continuing", { cause })
-        return Effect.fail(persistenceFailure)
-      }))
+        }))
+      }
       if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
-      lifecycleEffect = ref => snapshot.effect(ref)
-      lifecyclePromise = ref => snapshot.promise(ref)
       yield* Effect.try({ try: sync, catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.sync(() => report(error))))
       yield* Queue.offer(notifications, records)
       yield* schedule
@@ -354,12 +350,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
         : options.events ?? []
       definition = createEventLog({ schema: setup.schema, atoms: setup.effects, ...(checkpoint ? { checkpoint } : {}) })
-      const replayHistory = checkpoint && !options.journal ? history.slice(checkpoint.position) : history
-      snapshot = yield* Effect.try({ try: () => definition.replay(replayHistory), catch: RuntimeError.from })
+      snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
       const deferred = yield* Effect.try({ try: () => snapshot.deferred(), catch: RuntimeError.from })
       for (const work of deferred) if (work.handle.executor === "local") localRecovery.set(effectKey(work.ref), work)
-      lifecycleEffect = ref => snapshot.effect(ref)
-      lifecyclePromise = ref => snapshot.promise(ref)
       yield* Effect.try({ try: sync, catch: RuntimeError.from })
       yield* Deferred.succeed(ready, undefined)
       for (const recover of recovery) yield* recover

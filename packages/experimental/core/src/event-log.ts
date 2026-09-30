@@ -71,17 +71,18 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const coreRequests = new Map<string, EffectRequested>()
     const coreSettlements = new Map<string, EffectSettled>()
     const promiseSettlements = new Map<string, PromiseSettled>()
+    const effect = (ref: EffectRef) => {
+      const request = coreRequests.get(effectKey(ref))
+      if (!request) return undefined
+      const settlement = coreSettlements.get(effectKey(ref))
+      return settlement ? { request, settlement } : { request }
+    }
     const store = createStore(Context.make(EventLog, {
       events: source.events,
       bindings,
       position: seed?.position ?? 0,
       durable,
-      effect: ref => {
-        const request = coreRequests.get(effectKey(ref))
-        if (!request) return undefined
-        const settlement = coreSettlements.get(effectKey(ref))
-        return settlement ? { request, settlement } : { request }
-      },
+      effect,
       promise: ref => promiseSettlements.get(effectKey(ref)),
     }))
     const actReferences = new Map<object, EffectRef>()
@@ -305,12 +306,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           request: request.request, execute: proposal.execute, handle: result.handle }]
       }),
       pending: () => [...coreRequests].filter(([key]) => !coreSettlements.has(key)).map(([, record]) => record),
-      effect: (ref: EffectRef) => {
-        const request = coreRequests.get(effectKey(ref))
-        if (!request) return undefined
-        const settlement = coreSettlements.get(effectKey(ref))
-        return settlement ? { request, settlement } : { request }
-      },
+      effect,
       promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
       checkpoint,
     }
@@ -322,12 +318,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const current = engines.get(snapshot)
     if (!current) throw new Error("Snapshot belongs to another event log")
     if (!current.disposed && current.events.length === snapshot.events.length) return current
-    const restored = createEngine(snapshot.events, currentSeed(snapshot))
+    const restored = createEngine(snapshot.events, snapshot.seed)
     restored.restoreBindings(snapshot.bindings)
     engines.set(snapshot, restored)
     return restored
   }
-  const currentSeed = (snapshot: Snapshot): EffectCheckpoint | undefined => snapshot.seed
   const snapshotOf = (engine: Engine): Snapshot => {
     const work = Object.freeze([...engine.effects()])
     const deliveries = Object.freeze([...engine.deliveries()])
