@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { EffectRef, EffectRequested, EffectSettled, PromiseSettled } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, EffectRef, EffectRequested, EffectSettled, PromiseSettled } from "@clavia/tardigrade-experimental-core"
 import { Crypto, Effect, Encoding, PlatformError } from "effect"
 import type { EffectCheckpoint } from "@clavia/tardigrade-experimental-core/event-log"
 
@@ -10,7 +10,7 @@ const crypto = Crypto.make({
   digest: (algorithm, data) => Effect.tryPromise({ try: () => globalThis.crypto.subtle.digest(algorithm, data.slice().buffer as ArrayBuffer).then(value => new Uint8Array(value)), catch: cause => PlatformError.systemError({ _tag: "Unknown", module: "Crypto", method: "digest", description: "Checkpoint digest failed", cause }) }),
 })
 
-export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, Error> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(error => new Error(String(error))))
+export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, RuntimeError> => crypto.digest("SHA-256", payload).pipe(Effect.map(Encoding.encodeHex), Effect.mapError(RuntimeError.from))
 
 export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")

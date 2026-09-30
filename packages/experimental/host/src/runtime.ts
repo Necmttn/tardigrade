@@ -73,7 +73,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (payload.byteLength > checkpointMaxBytes) throw new RuntimeError(`Checkpoint exceeds maxBytes ${checkpointMaxBytes}`)
       return payload
     }
-    let lifecycleEffect: ((ref: EffectRef) => { readonly request: typeof EffectRequested.Type; readonly settlement?: typeof EffectSettled.Type } | undefined) | undefined
+    let lifecycleEffect: ((ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled } | undefined) | undefined
     let lifecyclePromise: ((ref: EffectRef) => PromiseSettled | undefined) | undefined
     const store = createStore(Context.make(EventLog, {
       events: source.events,
