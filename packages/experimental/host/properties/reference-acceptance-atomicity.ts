@@ -116,7 +116,6 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
     yield* reopened.wait
     const accepted = records.filter(event => event.type === "EffectRequested")
     if (accepted.length !== 1 || accepted[0]!.type !== "EffectRequested" || accepted[0]!.ref.seq !== position || executions.length !== 1 || effectKey(executions[0]!) !== effectKey(accepted[0]!.ref) || reopened.getState().view.completed.join(",") !== String(options.invocation)) return yield* Effect.fail(new RuntimeError("Recovery changed identity or repeated execution"))
-    return { position, ref: accepted[0]!.ref, executions: executions.length }
   }).pipe(Effect.ensuring(reopened.close))
 }).pipe(Effect.scoped, Effect.timeout(5_000)))
 
@@ -124,6 +123,4 @@ const runAcceptanceScenario = (options: AcceptanceCase) => Effect.runPromise(Eff
 export const referenceAcceptanceAtomicity = fc.asyncProperty(fc.record({
   invocation: fc.integer({ min: 1, max: 100 }), updates: fc.array(fc.integer({ min: -10, max: 10 }), { maxLength: 4 }),
   checkpoint: fc.boolean(), failCommit: fc.boolean(),
-}), async options => {
-  await runAcceptanceScenario(options)
-})
+}), runAcceptanceScenario)

@@ -119,7 +119,6 @@ const runPromiseDeliveryScenario = (mode: "local" | "external", options: Deliver
       const preceding = records.slice(0, index).find(record => record.type === "EffectSettled" && effectKey(record.ref) === effectKey(event.ref))
       if (preceding?.type !== "EffectSettled" || preceding.outcome.status !== "fulfilled") return yield* Effect.fail(new RuntimeError("Promise settlement requires a preceding successful effect settlement"))
     }
-    return { types, state }
   }).pipe(Effect.ensuring(Deferred.succeed(allowSettlement, undefined).pipe(
     Effect.andThen(Deferred.succeed(allowCommit, undefined)), Effect.andThen(store.close),
   )))
@@ -131,6 +130,4 @@ export const promiseSettlementOrder = fc.asyncProperty(fc.record({
   value: fc.integer({ min: -100, max: 100 }), rejected: fc.boolean(),
   duplicates: fc.integer({ min: 0, max: 4 }), updates: fc.integer({ min: 0, max: 4 }),
   holdMillis: fc.integer({ min: 1, max: 5 }),
-}), async ({ mode, ...options }) => {
-  await runPromiseDeliveryScenario(mode, options)
-})
+}), ({ mode, ...options }) => runPromiseDeliveryScenario(mode, options))
