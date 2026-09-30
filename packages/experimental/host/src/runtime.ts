@@ -1,7 +1,16 @@
-import { RuntimeError, createStore, createEventLog, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition } from "@clavia/tardigrade-experimental-core"
+import { RuntimeError, createStore, createEventSource, atom, EventLog, EffectExecution, ExecutionResult, EffectRequested, EffectSettled, hasCoreEventType, effectKey, type Recorded, type Atom, type Journal, type ActorRuntime, type ActorSetup, type Requirements, type ActorDefinition, type EffectRef, type PromiseSettled } from "@clavia/tardigrade-experimental-core"
+import { createEventLog, type EffectCheckpoint } from "@clavia/tardigrade-experimental-core/event-log"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue } from "effect"
 import { Promises } from "./services/promises"
+import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "./services/checkpoint"
 import { select } from "./stores/thread"
+
+export type CheckpointPolicy =
+  | { readonly mode: "quiescent"; readonly options?: { readonly maxBytes?: number } }
+  | { readonly mode: "threshold"; readonly options: { readonly everyEvents: number; readonly maxBytes?: number } }
+  | { readonly mode: "manual"; readonly options?: { readonly maxBytes?: number } }
+
+export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = { mode: "quiescent" }
 
 export type ActorServices<Definition> = Definition extends ActorDefinition<infer Event, infer State, infer _Methods, infer Services>
   ? (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<{ root: Atom<State> }> | Exclude<Services, Scope.Scope>, Error>
@@ -14,6 +23,7 @@ export function createActorStore<Event extends object, State, Methods extends ob
   // actorContext selects setup capabilities explicitly; the execution context is supplied only to effect execution.
   readonly actorContext: (services: Context.Context<Requirements<{ root: Atom<NoInfer<State>> }> | Exclude<NoInfer<Services>, Scope.Scope>>) => Context.Context<Exclude<NoInfer<Services>, Scope.Scope>>
   readonly events?: readonly Recorded<Event>[]
+  readonly checkpoint?: CheckpointPolicy
   readonly journal?: Journal<Event>
   readonly onEvent?: (event: Recorded<Event>) => void
 }) {
@@ -41,6 +51,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error>
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly events?: readonly Recorded<Event>[]
+  readonly checkpoint?: CheckpointPolicy
   readonly journal?: Journal<Event>
   readonly onEvent?: (event: Recorded<Event>) => void
 }) {
@@ -51,7 +62,27 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     let snapshot: ReturnType<typeof definition.replay>
     const source = createEventSource<Recorded<Event>>()
     const bindings = atom<ReadonlyMap<object, import("@clavia/tardigrade-experimental-core").EffectRef>>(new Map())
-    const store = createStore(Context.make(EventLog, { events: source.events, bindings }))
+    let checkpointSeed: EffectCheckpoint | undefined
+    let checkpointPosition = 0
+    const checkpointPolicy = options.checkpoint ?? DEFAULT_CHECKPOINT_POLICY
+    if (checkpointPolicy.mode === "threshold" && (!Number.isSafeInteger(checkpointPolicy.options.everyEvents) || checkpointPolicy.options.everyEvents < 1)) return yield* Effect.fail(new RuntimeError("Checkpoint everyEvents must be a positive safe integer"))
+    const checkpointMaxBytes = checkpointPolicy.options?.maxBytes ?? DEFAULT_CHECKPOINT_MAX_BYTES
+    if (!Number.isSafeInteger(checkpointMaxBytes) || checkpointMaxBytes < 1) return yield* Effect.fail(new RuntimeError("Checkpoint maxBytes must be a positive safe integer"))
+    const encodeChecked = (checkpoint: EffectCheckpoint) => {
+      const payload = encodeCheckpoint(checkpoint)
+      if (payload.byteLength > checkpointMaxBytes) throw new RuntimeError(`Checkpoint exceeds maxBytes ${checkpointMaxBytes}`)
+      return payload
+    }
+    let lifecycleEffect: ((ref: EffectRef) => { readonly request: typeof EffectRequested.Type; readonly settlement?: typeof EffectSettled.Type } | undefined) | undefined
+    let lifecyclePromise: ((ref: EffectRef) => PromiseSettled | undefined) | undefined
+    const store = createStore(Context.make(EventLog, {
+      events: source.events,
+      bindings,
+      position: () => checkpointSeed?.position ?? 0,
+      durable: () => checkpointSeed ? new Map(checkpointSeed.durable.map(entry => [entry.name, entry] as const)) : undefined,
+      effect: ref => lifecycleEffect?.(ref),
+      promise: ref => lifecyclePromise?.(ref),
+    }))
     const sync = () => {
       const position = store.get(source.events).length
       if (position > snapshot.events.length) throw new RuntimeError("Committed event history cannot shrink")
@@ -85,12 +116,25 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       if (persistenceFailure) return yield* Effect.fail(persistenceFailure)
       if (next === snapshot) return
       const records = next.events.slice(snapshot.events.length)
-      if (options.journal) yield* options.journal.append(snapshot.events.length, records).pipe(Effect.catchCause(cause => {
+      const eligible = checkpointPolicy.mode === "quiescent" || (checkpointPolicy.mode === "threshold" && next.position - checkpointPosition >= checkpointPolicy.options.everyEvents)
+      const checkpoint = options.journal && eligible ? next.checkpoint() : undefined
+      if (options.journal && checkpoint) yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from }).pipe(
+        Effect.flatMap(payload => checkpointDigest(payload).pipe(Effect.flatMap(digest => options.journal!.appendWithCheckpoint(snapshot.position, records, { position: next.position, payload, digest })))),
+        Effect.catchCause(cause => {
+          definition.discard(next)
+          persistenceFailure = new RuntimeError("Journal commit failed; reopen the actor before continuing", { cause })
+          return Effect.fail(persistenceFailure)
+        }),
+      )
+      else if (options.journal) yield* options.journal.append(snapshot.position, records).pipe(Effect.catchCause(cause => {
         definition.discard(next)
         persistenceFailure = new RuntimeError("Journal commit failed; reopen the actor before continuing", { cause })
         return Effect.fail(persistenceFailure)
       }))
+      if (options.journal && checkpoint) checkpointPosition = next.position
       snapshot = next
+      lifecycleEffect = ref => snapshot.effect(ref)
+      lifecyclePromise = ref => snapshot.promise(ref)
       yield* Effect.try({ try: sync, catch: RuntimeError.from }).pipe(Effect.catch(error => Effect.sync(() => report(error))))
       yield* Queue.offer(notifications, records)
       yield* schedule
@@ -268,9 +312,19 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       }).pipe(Effect.forkIn(scope))
       services = yield* buildServices()
       setup = yield* options.setup.pipe(Effect.provideService(Scope.Scope, scope), Effect.provide(options.actorContext(services)))
-      definition = createEventLog({ schema: setup.schema, atoms: setup.effects })
-      const history = options.journal ? yield* options.journal.read : options.events ?? []
-      snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
+      const stored = options.journal ? yield* options.journal.readCheckpoint : undefined
+      const checkpoint = stored ? yield* Effect.try({ try: () => decodeCheckpoint(stored.payload), catch: RuntimeError.from }) : undefined
+      checkpointSeed = checkpoint
+      checkpointPosition = checkpoint?.position ?? 0
+      // Atomic checkpoint commits make the prefix durable; recovery only needs its suffix.
+      const history = options.journal
+        ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
+        : options.events ?? []
+      definition = createEventLog({ schema: setup.schema, atoms: setup.effects, ...(checkpoint ? { checkpoint } : {}) })
+      const replayHistory = checkpoint && !options.journal ? history.slice(checkpoint.position) : history
+      snapshot = yield* Effect.try({ try: () => definition.replay(replayHistory), catch: RuntimeError.from })
+      lifecycleEffect = ref => snapshot.effect(ref)
+      lifecyclePromise = ref => snapshot.promise(ref)
       yield* Effect.try({ try: sync, catch: RuntimeError.from })
       yield* Deferred.succeed(ready, undefined)
       for (const recover of recovery) yield* recover
@@ -293,7 +347,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         },
         snapshot: () => snapshot,
         resume: run(send([])),
-        replay: definition.replay,
+        checkpoint: enqueue(Effect.gen(function* () {
+          if (!options.journal) return yield* Effect.fail(new RuntimeError("Checkpointing requires a journal"))
+          const checkpoint = snapshot.checkpoint()
+          if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending"))
+          const payload = yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from })
+          const digest = yield* checkpointDigest(payload).pipe(Effect.mapError(RuntimeError.from))
+          yield* options.journal.appendWithCheckpoint(snapshot.position, [], { position: snapshot.position, payload, digest }).pipe(Effect.mapError(RuntimeError.from))
+          checkpointPosition = snapshot.position
+        })),
         active: () => [...background.keys()],
         // wait observes local processing and failures; external promise delivery can arrive after it returns.
         wait: run(Effect.gen(function* () {

@@ -10,13 +10,22 @@ import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type 
 import { effectKey, EffectRef } from "./effect-ref"
 import type { Recorded } from "./journal"
 import { type IdentifiedEffectValue, type Proposed, type ServicesOf } from "./effects"
+import { DurableAtomCheckpoint } from "./durable"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
+
+export interface EffectCheckpoint {
+  readonly position: number
+  readonly durable: readonly { readonly name: string; readonly state: unknown; readonly position: number }[]
+  readonly effects: readonly { readonly ref: EffectRef; readonly request: EffectRequested; readonly settlement: EffectSettled }[]
+  readonly promises: readonly PromiseSettled[]
+}
 
 // createEventLog replays validated domain events and derives identified effect descriptions without executing them.
 export function createEventLog<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>>(options: {
   readonly schema: Schema.Schema<Event>
   readonly atoms: Atoms
+  readonly checkpoint?: EffectCheckpoint
 }) {
   type EffectValues = Proposed<Values<Atoms>[keyof Atoms]>
   type Work = IdentifiedEffectValue<ServicesOf<EffectValues>>
@@ -38,6 +47,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   }
   type Snapshot = {
     readonly events: readonly Recorded<Event>[]
+    readonly position: number
+    readonly seed: EffectCheckpoint | undefined
     readonly bindings: ReadonlyMap<object, EffectRef>
     readonly get: <Value>(node: Atom<Value>) => Value
     readonly view: () => Values<Atoms>
@@ -47,11 +58,29 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly pending: () => readonly EffectRequested[]
     readonly effect: (ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled } | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
+    readonly checkpoint: () => EffectCheckpoint | undefined
   }
-  const createEngine = (history: readonly Recorded<Event>[]) => {
+  const createEngine = (history: readonly Recorded<Event>[], seed?: EffectCheckpoint) => {
+    const offset = seed?.position ?? 0
     const source = createEventSource<Recorded<Event>>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
-    const store = createStore(Context.make(EventLog, { events: source.events, bindings }))
+    const durable = new Map(seed?.durable.map(entry => [entry.name, entry] as const))
+    const coreRequests = new Map<string, EffectRequested>()
+    const coreSettlements = new Map<string, EffectSettled>()
+    const promiseSettlements = new Map<string, PromiseSettled>()
+    const store = createStore(Context.make(EventLog, {
+      events: source.events,
+      bindings,
+      position: seed?.position ?? 0,
+      durable,
+      effect: ref => {
+        const request = coreRequests.get(effectKey(ref))
+        if (!request) return undefined
+        const settlement = coreSettlements.get(effectKey(ref))
+        return settlement ? { request, settlement } : { request }
+      },
+      promise: ref => promiseSettlements.get(effectKey(ref)),
+    }))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
     let records: readonly Recorded<Event>[] = store.get(source.events)
@@ -68,10 +97,44 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const owners = new Map<string, string>()
     const allocations = new Set<string>()
     const executionDeclarations = new Map<string, EffectRequest>()
-    const coreRequests = new Map<string, EffectRequested>()
-    const coreSettlements = new Map<string, EffectSettled>()
     const accepted = new Map<string, Work>()
-    const promiseSettlements = new Map<string, PromiseSettled>()
+    const restoredRefs = new Map<string, EffectRef>()
+    for (const entry of seed?.effects ?? []) {
+      const key = effectKey(entry.ref)
+      coreRequests.set(key, entry.request)
+      coreSettlements.set(key, entry.settlement)
+      restoredRefs.set(`${entry.ref.atom}\u0000${entry.ref.tag}`, entry.ref)
+    }
+    for (const entry of seed?.promises ?? []) promiseSettlements.set(effectKey(entry.ref), entry)
+    const checkpoint = (): EffectCheckpoint | undefined => {
+      const pendingEffects = [...coreRequests].filter(([key]) => !coreSettlements.has(key))
+      const pendingPromises = [...coreSettlements].some(([key, settlement]) => {
+        if (settlement.outcome.status !== "fulfilled") return false
+        return Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value).type === "promise" && !promiseSettlements.has(key)
+      })
+      if (pendingEffects.length || pendingPromises) return undefined
+      const effects = [...coreRequests].map(([key, request]) => {
+        const settlement = coreSettlements.get(key)
+        if (!settlement) throw new Error("Effect checkpoint contains an unsettled request")
+        return { ref: settlement.ref, request, settlement }
+      })
+      const durable = [...store.nodes().values()].flatMap(node => {
+        const capture = (node.atom as Partial<Record<typeof DurableAtomCheckpoint, unknown>>)[DurableAtomCheckpoint]
+        if (typeof capture !== "function") return []
+        return [capture(store.get, offset + records.length) as { readonly name: string; readonly state: unknown; readonly position: number }]
+      })
+      const names = new Set<string>()
+      for (const entry of durable) {
+        if (names.has(entry.name)) throw new Error(`Duplicate durable atom checkpoint name: ${entry.name}`)
+        names.add(entry.name)
+      }
+      return Object.freeze({
+        position: offset + records.length,
+        durable: Object.freeze(durable),
+        effects: Object.freeze(effects),
+        promises: Object.freeze([...promiseSettlements.values()]),
+      })
+    }
     const view = (): Values<Atoms> => Object.fromEntries(Object.entries(options.atoms).map(([name, node]) => [name, store.get(node)])) as Values<Atoms>
     const effects = (): readonly Work[] => {
       const values = view()
@@ -113,7 +176,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         const proposal = candidate as ActRequest<Schema.Json, Schema.Json, ServicesOf<EffectValues>>
         if (typeof proposal.id !== "string" || !proposal.id) throw new Error("Effect identity must not be empty")
         const assigned = actReferences.get(proposal.identity)
-        const ref = assigned ?? freeze(Schema.decodeSync(EffectRef)({ seq: records.length, atom: name, tag: proposal.id }))
+        const ref = assigned ?? restoredRefs.get(`${name}\u0000${proposal.id}`) ?? freeze(Schema.decodeSync(EffectRef)({ seq: (seed?.position ?? 0) + records.length, atom: name, tag: proposal.id }))
         const owner = actOwners.get(proposal.identity)
         if (owner !== undefined && owner !== name) throw new Error("An act request must belong to one source")
         actOwners.set(proposal.identity, name)
@@ -137,8 +200,15 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (Schema.is(CoreEvent)(event)) {
         const key = effectKey(event.ref)
         if (event.type === "EffectRequested") {
-          if (event.ref.seq > records.length) throw new Error("Effect reference points beyond its request")
-          if (coreRequests.has(key)) throw new Error("Duplicate core effect request")
+          if (event.ref.seq > (seed?.position ?? 0) + records.length) throw new Error("Effect reference points beyond its request")
+          if (coreRequests.has(key)) {
+            const prior = coreRequests.get(key)
+            if (!isDeepStrictEqual(prior, event)) throw new Error("Conflicting core effect request")
+            source.append(store, [event])
+            records = store.get(source.events)
+            effects()
+            return
+          }
           const offered = effects().find(work => effectKey(work.ref) === key)
           if (!offered || !isDeepStrictEqual(offered.request, event.request)) throw new Error("Effect request differs from its proposal")
           coreRequests.set(key, event)
@@ -167,7 +237,9 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       throw error
     }
     return {
+      seed,
       get events() { return records },
+      get position() { return offset + records.length },
       get disposed() { return disposed },
       append,
       dispose,
@@ -205,6 +277,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         return settlement ? { request, settlement } : { request }
       },
       promise: (ref: EffectRef) => promiseSettlements.get(effectKey(ref)),
+      checkpoint,
     }
   }
   type Engine = ReturnType<typeof createEngine>
@@ -214,17 +287,20 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const current = engines.get(snapshot)
     if (!current) throw new Error("Snapshot belongs to another event log")
     if (!current.disposed && current.events.length === snapshot.events.length) return current
-    const restored = createEngine(snapshot.events)
+    const restored = createEngine(snapshot.events, currentSeed(snapshot))
     restored.restoreBindings(snapshot.bindings)
     engines.set(snapshot, restored)
     return restored
   }
+  const currentSeed = (snapshot: Snapshot): EffectCheckpoint | undefined => snapshot.seed
   const snapshotOf = (engine: Engine): Snapshot => {
     const work = Object.freeze([...engine.effects()])
     const deliveries = Object.freeze([...engine.deliveries()])
     const values = Object.freeze(engine.view())
     const snapshot: Snapshot = Object.freeze({
       events: engine.events,
+      position: engine.position,
+      seed: engine.seed,
       bindings: engine.bindings(),
       get: <Value>(node: Atom<Value>): Value => engineOf(snapshot).get(node),
       view: () => values,
@@ -234,12 +310,13 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       pending: () => engineOf(snapshot).pending(),
       effect: (ref: EffectRef) => engineOf(snapshot).effect(ref),
       promise: (ref: EffectRef) => engineOf(snapshot).promise(ref),
+      checkpoint: () => engineOf(snapshot).checkpoint(),
     })
     engines.set(snapshot, engine)
     return snapshot
   }
   const replay = (history: readonly Recorded<Event>[]): Snapshot => {
-    const engine = createEngine(history)
+    const engine = createEngine(history, options.checkpoint)
     try {
       return snapshotOf(engine)
     } catch (error) {
@@ -276,5 +353,6 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     get: <Value>(snapshot: Snapshot, node: Atom<Value>): Value => snapshot.get(node),
     view: (snapshot: Snapshot) => snapshot.view(),
     effects: (snapshot: Snapshot) => snapshot.effects(),
+    checkpoint: (snapshot: Snapshot): EffectCheckpoint | undefined => snapshot.checkpoint(),
   }
 }

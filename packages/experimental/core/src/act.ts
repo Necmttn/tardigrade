@@ -84,14 +84,15 @@ export function act<const Name extends string, Input extends Schema.Json, Value 
       const reference = get(ref)
       const context = get(eventLogContext)
       if (!reference || !context) return { status: "pending" }
-      const events = get(Context.get(context, EventLog).events)
+      const service = Context.get(context, EventLog)
+      const events = get(service.events)
       const key = effectKey(reference)
-      const settlement = events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
+      const settlement = service.effect?.(reference)?.settlement ?? events.find(event => Schema.is(EffectSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(EffectSettled)(settlement)) return { status: "pending" }
       if (settlement.outcome.status === "rejected") return { status: "rejected", reason: decodeFailure(settlement.outcome.reason) }
       const outcome = Schema.decodeUnknownSync(ExecutionResult)(settlement.outcome.value)
       if (outcome.type === "value") return { status: "fulfilled", value: decodeSuccess(outcome.value) }
-      const resolved = events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
+      const resolved = service.promise?.(reference) ?? events.find(event => Schema.is(PromiseSettled)(event) && effectKey(event.ref) === key)
       if (!Schema.is(PromiseSettled)(resolved)) return { status: "pending" }
       return resolved.result.status === "fulfilled"
         ? { status: "fulfilled", value: decodeSuccess(resolved.result.value) }

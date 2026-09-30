@@ -13,7 +13,7 @@ import type { ToolSpec } from "@clavia/tardigrade-experimental-packages/types"
 
 import { ToolCatalog } from "../context"
 
-export const pendingTools = durableAtom({ input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
+export const pendingTools = durableAtom({ name: "agent.tools.pending", input: Schema.Union([ModelReturned, ToolCalled, ToolReturned]), schema: ToolState, initial: { queue: [], pending: null, running: false }, reduce: toolState })
 
 export type ToolPlan =
   | { readonly position: "waiting" | "blocked"; readonly reason: string }
