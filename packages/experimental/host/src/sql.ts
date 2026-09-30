@@ -49,9 +49,12 @@ export function sqlJournal<Event extends object>(options: {
     readAfter: (position) => Effect.gen(function* () {
       if (!Number.isSafeInteger(position) || position < 0) return yield* Effect.fail(new RuntimeError("Invalid journal position"))
       const sql = yield* client
-      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq > ${position} ORDER BY seq`
+      const last = yield* sql<{ seq: number }>`SELECT seq FROM experimental_events WHERE actor = ${options.actor} ORDER BY seq DESC LIMIT 1`
+      const length = last.length === 0 ? 0 : last[0]!.seq + 1
+      if (!Number.isSafeInteger(length) || length < 0 || position > length) return yield* Effect.fail(new RuntimeError("Checkpoint position exceeds journal length"))
+      const rows = yield* sql<{ seq: number; event: string }>`SELECT seq, event FROM experimental_events WHERE actor = ${options.actor} AND seq >= ${position} ORDER BY seq`
       return yield* Effect.try({ try: () => rows.map((row, index) => {
-        if (row.seq !== position + index + 1 || typeof row.event !== "string") throw new RuntimeError("Invalid journal sequence")
+        if (row.seq !== position + index || typeof row.event !== "string") throw new RuntimeError("Invalid journal sequence")
         return JSON.parse(row.event) as Recorded<Event>
       }), catch: RuntimeError.from })
     }),

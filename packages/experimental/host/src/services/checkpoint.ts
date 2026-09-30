@@ -14,6 +14,7 @@ export const checkpointDigest = (payload: Uint8Array): Effect.Effect<string, Run
 
 export const encodeCheckpoint = (checkpoint: EffectCheckpoint): Uint8Array => {
   if (!Number.isSafeInteger(checkpoint.position) || checkpoint.position < 0) throw new Error("Invalid checkpoint position")
+  if (checkpoint.durable.some(entry => entry.position !== checkpoint.position)) throw new Error("Durable entry position differs from checkpoint position")
   if (checkpoint.durable.some(entry => !Schema.is(Schema.Json)(entry.state))) throw new Error("Checkpoint state must be JSON")
   let encoded: string
   try {
@@ -34,6 +35,7 @@ export const decodeCheckpoint = (bytes: Uint8Array): EffectCheckpoint => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) throw new Error("Invalid durable checkpoint entry")
     const item = entry as Record<string, unknown>
     if (typeof item.name !== "string" || !item.name || !Number.isSafeInteger(item.position) || (item.position as number) < 0 || !Schema.is(Schema.Json)(item.state)) throw new Error("Invalid durable checkpoint entry")
+    if (item.position !== record.position) throw new Error("Durable entry position differs from checkpoint position")
     return { name: item.name, state: item.state, position: item.position as number }
   })
   const effects = record.effects.map(entry => {

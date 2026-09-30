@@ -55,7 +55,7 @@ export function durableAtom<State, Event>(options: {
     const previous = Option.getOrUndefined(get.self<Frame>())
     const sameSource = previous !== undefined && previous.source === source
     if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
-    if (seed && seed.position < offset) throw new Error(`Durable atom checkpoint precedes event source: ${options.name}`)
+    if (seed && seed.position !== offset) throw new Error(`Durable atom checkpoint position differs from event source: ${options.name}`)
     if (seed && !sameSource) decode(seed.state)
     let state = sameSource ? previous.state : seed ? decode(seed.state) : structuredClone(initial)
     const start = sameSource ? previous.position - offset : seed ? seed.position - offset : 0
