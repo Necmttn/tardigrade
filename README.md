@@ -21,16 +21,25 @@ React derives UI from state, while Elm makes state transitions explicit function
 
 <p align="center"><code>{ view, transitions } = f(event log)</code></p>
 
-## API generations
+## Public API
 
-Unversioned imports and `tardie/v1/*` expose the component framework. `tardie/v2/*` exposes the atom framework. Each versioned namespace selects its actor definitions, methods, services, and platform hosts together.
+`tardie/core` contains actor and atom authoring primitives. Runtime construction lives in `tardie/core/runtime`; capability and storage contracts live in `tardie/core/services`. Agent behavior, implementation layers, libraries, and platforms have explicit entrypoints.
 
-```ts
-import { defineActor as componentActor } from "tardie/v1/core"
-import { defineActor as atomActor } from "tardie/v2/core"
+```text
+tardie/
++-- core
+|   +-- runtime
+|   `-- services
++-- agent
+|   `-- services
++-- libraries
++-- bun
++-- cloudflare
++-- worker-loader
+`-- deprecated/       component API
 ```
 
-The filesystem places the atom framework in `packages/core`, `packages/agent`, and `packages/platform`. Component implementations live in `packages/deprecated`. Public import paths select the API generation independently of these directories.
+Component applications use `tardie/deprecated/*`, including `tardie/deprecated/platform/bun` and `tardie/deprecated/platform/cloudflare`. Component implementations live in `packages/deprecated`; atom implementations live in `packages/core`, `packages/agent`, and `packages/platform`.
 
 ## Why Tardigrade
 
@@ -107,7 +116,7 @@ The [`ComponentDefinition` interface](packages/deprecated/core/src/component/mac
 
 ```ts
 import { Effect } from "effect"
-import { tool } from "tardie/agent"
+import { tool } from "tardie/deprecated/agent"
 
 const papers = tool({
   spec: {
@@ -147,9 +156,9 @@ An offered tool follows this lifecycle:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { actor } from "tardie/core"
-import { agentMethods, agents, budget, compact, messages, infer, outputValidateOnce, system, tools } from "tardie/agent"
-import { fetch, workspace } from "tardie/code"
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, agents, budget, compact, messages, infer, outputValidateOnce, system, tools } from "tardie/deprecated/agent"
+import { fetch, workspace } from "tardie/deprecated/code"
 
 const researcher = actor({
   name: "researcher",
@@ -196,7 +205,7 @@ Each action and result becomes an event that every component can interpret.
 The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. The model services select the provider implementation from the configured protocol.
 
 ```ts
-import { createBunHost } from "tardie/bun"
+import { createBunHost } from "tardie/deprecated/platform/bun"
 import { bunModelServices } from "tardie/server/model-services"
 
 const { layers } = await bunModelServices({

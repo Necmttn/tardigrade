@@ -13,31 +13,31 @@ order: 2
 bun add tardie
 ```
 
-Most applications can import their actor definition, agent components, policies, and public types from `tardie/v1/core` and `tardie/v1/agent`:
+Most applications can import their actor definition, agent components, policies, and public types from `tardie/deprecated/core` and `tardie/deprecated/agent`:
 
 ```ts
-import { actor } from "tardie/v1/core"
-import { agentMethods, budget, codeMode, compact, messages, infer, nativeOutput, system, tool } from "tardie/v1/agent"
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, budget, codeMode, compact, messages, infer, nativeOutput, system, tool } from "tardie/deprecated/agent"
 ```
 
 ## Core primitives
 
-The `tardie/v1/core` entry point exports the common actor and component types. Lower-level integrations can import each primitive directly:
+The `tardie/deprecated/core` entry point exports the common actor and component types. Lower-level integrations can import each primitive directly:
 
 <div className="sdk-reference-list">
-  <div><code>tardie/v1/core/event</code><span><code>Event</code></span></div>
-  <div><code>tardie/v1/core/machine</code><span><code>Machine</code></span></div>
-  <div><code>tardie/v1/core/projection</code><span><code>Projection</code>, materialization, and replay</span></div>
-  <div><code>tardie/v1/core/component</code><span>Components, component output, and composition</span></div>
-  <div><code>tardie/v1/core/view</code><span><code>ViewAlgebra</code></span></div>
-  <div><code>tardie/v1/core/intent</code><span>Intent transitions</span></div>
-  <div><code>tardie/v1/core/effect</code><span>External effect transitions</span></div>
-  <div><code>tardie/v1/core/transition</code><span>The transition union and transition projections</span></div>
-  <div><code>tardie/v1/core/actor</code><span>Actors, methods, contracts, and references</span></div>
+  <div><code>tardie/deprecated/core/event</code><span><code>Event</code></span></div>
+  <div><code>tardie/deprecated/core/machine</code><span><code>Machine</code></span></div>
+  <div><code>tardie/deprecated/core/projection</code><span><code>Projection</code>, materialization, and replay</span></div>
+  <div><code>tardie/deprecated/core/component</code><span>Components, component output, and composition</span></div>
+  <div><code>tardie/deprecated/core/view</code><span><code>ViewAlgebra</code></span></div>
+  <div><code>tardie/deprecated/core/intent</code><span>Intent transitions</span></div>
+  <div><code>tardie/deprecated/core/effect</code><span>External effect transitions</span></div>
+  <div><code>tardie/deprecated/core/transition</code><span>The transition union and transition projections</span></div>
+  <div><code>tardie/deprecated/core/actor</code><span>Actors, methods, contracts, and references</span></div>
 </div>
 
 ```ts
-import type { Machine } from "tardie/v1/core/machine"
-import type { Projection } from "tardie/v1/core/projection"
-import type { ComponentOutput } from "tardie/v1/core/component"
+import type { Machine } from "tardie/deprecated/core/machine"
+import type { Projection } from "tardie/deprecated/core/projection"
+import type { ComponentOutput } from "tardie/deprecated/core/component"
 ```

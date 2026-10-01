@@ -9,8 +9,8 @@ import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
 import type { Actor } from "@clavia/tardigrade-deprecated-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-deprecated-code/sandbox/defaults"
 import { createHost, type Host, type HostOptions, type ThreadEnv } from "@clavia/tardigrade-deprecated-host/host"
-import { NativeOutputSupport, type AgentR, type InferRequest } from "tardie/v1"
-import type { Action } from "tardie/v1/log/events"
+import { NativeOutputSupport, type AgentR, type InferRequest } from "tardie/deprecated"
+import type { Action } from "tardie/deprecated/log/events"
 
 export const ROOT_THREAD = "ag.root"
 

@@ -5,10 +5,10 @@
     "resolveJsonModule": true,
     "types": ["@cloudflare/workers-types"],
     "paths": {
-      "tardie/v1/cloudflare": ["../../../packages/deprecated/platform/cloudflare/src/index.ts"],
+      "tardie/deprecated/platform/cloudflare": ["../../../packages/deprecated/platform/cloudflare/src/index.ts"],
       "tardie/model/*": ["../../../packages/model/src/*.ts"],
       "tardie/http/*": ["../../../packages/http/src/*.ts"],
-      "tardie/v1/bun/*": ["../../../packages/deprecated/platform/bun/src/*.ts"],
+      "tardie/deprecated/platform/bun/*": ["../../../packages/deprecated/platform/bun/src/*.ts"],
       "tardie/server/*": ["../../../apps/server/src/*.ts"]
     }
   },

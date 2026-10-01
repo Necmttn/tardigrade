@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-deprecated-cloudflare/index"
+export * from "@clavia/tardigrade-platform/cloudflare"

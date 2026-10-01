@@ -2,8 +2,9 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "n
 import { tmpdir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
+import { rewriteComponentRuntimeImports, rewriteWorkspaceImports, stageInitTemplates } from "./publish-paths"
 import { publishDependencies, publishSources } from "./publish-manifest"
+import { publicExports } from "./publish-exports"
 
 type PkgJson = {
   readonly name: string
@@ -33,123 +34,6 @@ const option = (name: string) => {
 const BIN_NAME = "tdg"
 
 const BIN_ENTRY = "./src/cli/main.ts"
-
-const legacyExports = {
-  ".": "./src/tardie/index.ts",
-  "./agent": "./src/deprecated/agent/index.ts",
-  "./agent/*": "./src/deprecated/agent/*.ts",
-  "./agent/testing/model": "./src/deprecated/agent/testing/model.ts",
-  "./agent/testing": "./src/tardie/agent-testing.ts",
-  "./core": "./src/deprecated/core/index.ts",
-  "./core/testing": "./src/deprecated/core/testing/check.ts",
-  "./testing": "./src/tardie/testing.ts",
-  "./code": "./src/deprecated/code/index.ts",
-  "./actor/*": "./src/deprecated/agent/actor/*.ts",
-  "./component/*": "./src/deprecated/agent/component/*.ts",
-  "./component/infer/*": "./src/deprecated/agent/component/infer/*.ts",
-  "./log/*": "./src/deprecated/agent/log/*.ts",
-  "./output/*": "./src/deprecated/agent/output/*.ts",
-  "./packages/*": "./src/deprecated/agent/packages/*.ts",
-  "./projection/*": "./src/deprecated/agent/projection/*.ts",
-  "./runtime/*": "./src/deprecated/agent/runtime/*.ts",
-  "./core/actor": "./src/deprecated/core/actor/index.ts",
-  "./core/actor/*": "./src/deprecated/core/actor/*.ts",
-  "./core/alarm": "./src/deprecated/core/alarm.ts",
-  "./core/interaction": "./src/deprecated/core/interaction/index.ts",
-  "./core/interaction/*": "./src/deprecated/core/interaction/*.ts",
-  "./core/transport": "./src/deprecated/core/transport/index.ts",
-  "./core/transport/*": "./src/deprecated/core/transport/*.ts",
-  "./core/component": "./src/deprecated/core/component/index.ts",
-  "./core/component/runtime": null,
-  "./core/component/composition/parent": null,
-  "./core/component/compose": "./src/deprecated/core/component/composition/siblings.ts",
-  "./core/component/children": "./src/deprecated/core/component/composition/children.ts",
-  "./core/component/reconciliation": "./src/deprecated/core/component/composition/reconciliation.ts",
-  "./core/component/tree": "./src/deprecated/core/component/composition/tree.ts",
-  "./core/component/*": "./src/deprecated/core/component/*.ts",
-  "./core/effect": "./src/deprecated/core/effect.ts",
-  "./core/event": "./src/deprecated/core/event.ts",
-  "./core/intent": "./src/deprecated/core/intent.ts",
-  "./core/log": "./src/deprecated/core/log/index.ts",
-  "./core/log/event": "./src/deprecated/core/event.ts",
-  "./core/log/*": "./src/deprecated/core/log/*.ts",
-  "./core/machine": "./src/deprecated/core/machine.ts",
-  "./core/projection": "./src/deprecated/core/projection/projection.ts",
-  "./core/projection/*": "./src/deprecated/core/projection/*.ts",
-  "./core/reconciliation": "./src/deprecated/core/compatibility/reconciliation.ts",
-  "./core/reconciliation/reconciler": "./src/deprecated/core/compatibility/reconciler.ts",
-  "./core/reconciliation/transition": "./src/deprecated/core/compatibility/transition.ts",
-  "./core/runtime": "./src/deprecated/core/runtime/index.ts",
-  "./core/runtime/*": "./src/deprecated/core/runtime/*.ts",
-  "./core/transition": "./src/deprecated/core/transition/index.ts",
-  "./core/transition/*": "./src/deprecated/core/transition/*.ts",
-  "./core/view": "./src/deprecated/core/view.ts",
-  "./code/execution/*": "./src/deprecated/code/execution/*.ts",
-  "./code/package/*": "./src/deprecated/code/package/*.ts",
-  "./code/sandbox/*": "./src/deprecated/code/sandbox/*.ts",
-  "./code/storage/*": "./src/deprecated/code/storage/*.ts",
-  "./host/*": "./src/deprecated/host/*.ts",
-  "./bun": "./src/deprecated/platform/bun/index.ts",
-  "./bun/*": "./src/deprecated/platform/bun/*.ts",
-  "./worker": "./src/deprecated/platform/cloudflare/index.ts",
-  "./worker/*": "./src/deprecated/platform/cloudflare/*.ts",
-  "./cloudflare": "./src/deprecated/platform/cloudflare/index.ts",
-  "./cloudflare/*": "./src/deprecated/platform/cloudflare/*.ts",
-  "./cli/*": "./src/deprecated/cli/*.ts",
-  "./worker-loader/*": "./src/platform/shared/worker-loader/*.ts",
-  "./channels": "./src/channels/index.ts",
-  "./channels/*": "./src/channels/*.ts",
-  "./client": "./src/client/index.ts",
-  "./client/*": "./src/client/*.ts",
-  "./http/*": "./src/http/*.ts",
-  "./server/*": "./src/server/*.ts",
-  "./model": "./src/model/index.ts",
-  "./model/catalog": "./src/model/catalog/index.ts",
-  "./model/catalog-store": "./src/model/catalog/repository.ts",
-  "./model/catalog-page": "./src/model/catalog/page.ts",
-  "./model/catalog-availability": "./src/model/catalog/availability.ts",
-  "./model/metadata": "./src/model/catalog/metadata.ts",
-  "./model/directory": "./src/model/providers/directory.ts",
-  "./model/reasoning": "./src/model/providers/options.ts",
-  "./model/request-policy": "./src/model/stream/policy.ts",
-  "./model/output": "./src/model/output.ts",
-  "./model/*": "./src/model/*.ts"
-}
-
-const modernExports = {
-  ".": "./src/tardie/v2/index.ts",
-  "./core": "./src/core/index.ts",
-  "./core/*": "./src/core/*.ts",
-  "./core/actor": "./src/core/actor/definition.ts",
-  "./core/event-log": "./src/core/runtime/replay.ts",
-  "./agent": "./src/agent/index.ts",
-  "./agent/*": "./src/agent/*.ts",
-  "./agent/atoms": "./src/agent/atoms/index.ts",
-  "./agent/atoms/durable": "./src/agent/atoms/durable/index.ts",
-  "./agent/services": "./src/agent/services/index.ts",
-  "./libraries": "./src/libraries/index.ts",
-  "./libraries/*": "./src/libraries/*.ts",
-  "./bun": "./src/platform/bun/index.ts",
-  "./cloudflare": "./src/platform/cloudflare/index.ts",
-  "./platform/*": "./src/platform/*.ts",
-  "./platform/worker-loader/*": "./src/platform/shared/worker-loader/*.ts",
-  "./model": "./src/model/index.ts",
-  "./model/catalog": "./src/model/catalog/index.ts",
-  "./model/catalog-store": "./src/model/catalog/repository.ts",
-  "./model/catalog-page": "./src/model/catalog/page.ts",
-  "./model/catalog-availability": "./src/model/catalog/availability.ts",
-  "./model/metadata": "./src/model/catalog/metadata.ts",
-  "./model/directory": "./src/model/providers/directory.ts",
-  "./model/reasoning": "./src/model/providers/options.ts",
-  "./model/request-policy": "./src/model/stream/policy.ts",
-  "./model/output": "./src/model/output.ts",
-  "./model/*": "./src/model/*.ts",
-  "./cli/*": "./src/cli/*.ts"
-}
-
-const versionedExports = (generation: string, exports: Readonly<Record<string, string | null>>) => Object.fromEntries(
-  Object.entries(exports).map(([path, target]) => [path === "." ? `./${generation}` : `./${generation}/${path.slice(2)}`, target]),
-)
 
 const STAGED_EXAMPLES = "examples"
 
@@ -227,7 +111,7 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
       continue
     }
     if (!entry.isFile() || !entry.name.endsWith(".ts")) continue
-    let source = await readFile(path, "utf8")
+    let source = rewriteWorkspaceImports(await readFile(path, "utf8"), path, sourceRoot, privatePackages)
     for (const [from, to] of rewrites) {
       source = source.replaceAll(`${from}/`, `${to}/`).replaceAll(`"${from}"`, `"${to}"`).replaceAll(`'${from}'`, `'${to}'`)
     }
@@ -240,6 +124,9 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
 }
 
 const packages = publishSources
+const privatePackages = packages
+  .filter(source => ["core", "agent", "libraries", "platform"].includes(source.namespace))
+  .map(source => ({ name: source.pkg.name, namespace: source.namespace, exports: "exports" in source.pkg ? source.pkg.exports : {} }))
 const publicSource = packages.find((source) => source.namespace === "tardie")!
 const dependencies = publishDependencies(packages.map((source) => source.pkg))
 const version = option("--version") ?? (await readPkg(".")).version
@@ -288,18 +175,9 @@ try {
     })
   ])
 
-  const rewrites = new Map([
-    ["@clavia/tardigrade-platform/bun", "tardie/v2/bun"],
-    ["@clavia/tardigrade-platform/cloudflare", "tardie/v2/cloudflare"],
-    ...packages
-      .filter((source) => source.namespace !== "tardie")
-      .map((source) => {
-        const namespace = source.namespace.startsWith("deprecated/")
-          ? source.namespace.replace("deprecated/platform/", "v1/").replace("deprecated/", "v1/")
-          : ["core", "agent", "libraries", "platform", "cli"].includes(source.namespace) ? `v2/${source.namespace}` : source.namespace
-        return [source.pkg.name, `${publicSource.pkg.name}/${namespace}`] as const
-      })
-  ])
+  const rewrites = new Map(packages
+    .filter(source => source.namespace !== "tardie" && !privatePackages.some(pkg => pkg.name === source.pkg.name))
+    .map(source => [source.pkg.name, `${publicSource.pkg.name}/${source.namespace}`] as const))
   await rewriteSources(join(stage, "src"), rewrites)
 
   const repository = publicSource.pkg.repository
@@ -321,15 +199,7 @@ try {
     engines: publicSource.pkg.engines,
     type: "module",
     bin: { [BIN_NAME]: BIN_ENTRY },
-    exports: {
-      ...legacyExports,
-      "./deprecated": legacyExports["."],
-      "./deprecated/platform/bun": legacyExports["./bun"],
-      "./deprecated/platform/cloudflare": legacyExports["./cloudflare"],
-      ...versionedExports("v1", legacyExports),
-      ...versionedExports("v2", modernExports),
-      "./package.json": "./package.json",
-    },
+    exports: publicExports,
     ...dependencies
   }
   await writeFile(join(stage, "package.json"), `${JSON.stringify(publishManifest, null, 2)}\n`)
@@ -338,7 +208,7 @@ try {
   const stagedModules = join(stage, "node_modules")
   await symlink(join(root, "node_modules"), stagedModules, "dir")
   try {
-    await run([process.execPath, "-e", "const root = await import('tardie'); const v1 = await import('tardie/v1'); const v2 = await import('tardie/v2'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const atomCore = await import('tardie/v2/core'); const atomAgent = await import('tardie/v2/agent'); if (root.defineActor !== v1.defineActor || root.defineActor !== core.defineActor || root.infer !== agent.infer || v2.defineActor !== atomCore.defineActor || v2.infer !== atomAgent.infer || typeof atomCore.durableAtom !== 'function' || root.defineActor === v2.defineActor) throw new Error('generation exports failed'); const testing = await import('tardie/testing'); const agentTesting = await import('tardie/v1/agent/testing'); if (typeof testing.checkActor !== 'function' || typeof testing.replayActor !== 'function' || typeof agentTesting.testInferenceLayer !== 'function') throw new Error('testing exports failed'); const eventLog = await import('tardie/v2/core/event-log'); if (typeof eventLog.createEventLog !== 'function') throw new Error('event-log export failed'); await import('tardie/bun'); await import('tardie/v2/bun'); await import('tardie/client'); for (const prefix of ['tardie', 'tardie/v1']) for (const suffix of ['/core/component/runtime', '/core/component/composition/parent']) { let blocked = false; try { await import(prefix + suffix) } catch { blocked = true } if (!blocked) throw new Error(prefix + suffix + ' is publicly importable') }"], stage)
+    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const deprecated = await import('tardie/deprecated'); const oldCore = await import('tardie/deprecated/core'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || deprecated.defineActor !== oldCore.defineActor || typeof core.durableAtom !== 'function' || root.defineActor === deprecated.defineActor) throw new Error('public exports failed'); for (const name of ['tool', 'infer', 'code', 'permissions', 'budget', 'compaction', 'context', 'escalation', 'escalate', 'compact']) { const component = await import('tardie/deprecated/component/' + name); if (component !== await import('tardie/deprecated/agent/component/' + name)) throw new Error('component alias failed: ' + name) } const testing = await import('tardie/deprecated/testing'); const agentTesting = await import('tardie/deprecated/agent/testing'); if (typeof testing.checkActor !== 'function' || typeof testing.replayActor !== 'function' || typeof agentTesting.testInferenceLayer !== 'function') throw new Error('testing exports failed'); await import('tardie/core/runtime'); await import('tardie/core/services'); await import('tardie/agent/services'); await import('tardie/deprecated/platform/bun'); await import('tardie/bun'); await import('tardie/client'); for (const path of ['tardie/v1', 'tardie/v2', 'tardie/core/atoms/act', 'tardie/core/event-log', 'tardie/deprecated/core/component/runtime', 'tardie/deprecated/core/component/composition/parent']) { let blocked = false; try { await import(path) } catch { blocked = true } if (!blocked) throw new Error(path + ' is publicly importable') }"], stage)
   } finally {
     await rm(stagedModules)
   }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { InferDelta } from "tardie/v1"
+import type { InferDelta } from "tardie/deprecated"
 
 import { makeInferenceStream } from "./inference-stream"
 

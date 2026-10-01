@@ -1,6 +1,6 @@
-import { actor } from "tardie/v1/core"
-import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/v1/agent"
-import { fetch, workspace } from "tardie/v1/code"
+import { actor } from "tardie/deprecated/core"
+import { agentMethods, agents, budget, caller, escalate, codeMode, compact, messages, infer, outputValidateOnce, system } from "tardie/deprecated/agent"
+import { fetch, workspace } from "tardie/deprecated/code"
 
 const actorName = "react-chat"
 const sol = { provider: "openrouter", model_id: "openai/gpt-5.6-sol" } as const

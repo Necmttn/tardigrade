@@ -56,7 +56,7 @@ import {
   actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
   compaction, fetchPackage, infer,
   outputValidateOnce, system, workspacePackage
-} from "tardie/v1"
+} from "tardie/deprecated"
 
 const actorName = "researcher"
 

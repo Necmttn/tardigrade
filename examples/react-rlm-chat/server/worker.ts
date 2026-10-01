@@ -1,8 +1,8 @@
 import { providerLayer } from "tardie/model/providers/openrouter"
 import definition from "./actor"
-import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom, objectStorageFromR2, type Env, type WorkerHost } from "tardie/v1/cloudflare"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom, objectStorageFromR2, type Env, type WorkerHost } from "tardie/deprecated/platform/cloudflare"
 import { Effect, Layer } from "effect"
-import { ObjectStorage } from "tardie/v1/agent"
+import { ObjectStorage } from "tardie/deprecated/agent"
 import { uploadLimit, uploadResponse } from "./uploads"
 import modelLock from "./models.lock.json"
 

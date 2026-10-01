@@ -149,7 +149,7 @@ For another WebSocket, Redis, pub/sub, or telemetry transport, supply an observe
 
 ```ts
 import { Effect } from "effect"
-import type { InferenceObserver } from "tardie/v1/agent"
+import type { InferenceObserver } from "tardie/deprecated/agent"
 
 const observer: InferenceObserver = {
   policy: { bufferCapacity: 128, deliveryTimeoutMs: 250 },
@@ -168,7 +168,7 @@ The inference binding fails a turn with `output_limit` when the provider exhaust
 `tardie/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
 
 ```ts
-import { agentMethods } from "tardie/v1/agent"
+import { agentMethods } from "tardie/deprecated/agent"
 import { makeActorClient } from "tardie/client"
 
 const client = makeActorClient({ baseUrl: "http://localhost:4242", methods: agentMethods })

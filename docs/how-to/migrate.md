@@ -88,7 +88,7 @@ Replace direct model invocation in the application backend with the generated cl
 
 ```ts
 import { makeActorClient } from "tardie/client"
-import { agentMethods } from "tardie/v1/agent"
+import { agentMethods } from "tardie/deprecated/agent"
 
 const client = makeActorClient({
   baseUrl: process.env.TARDIGRADE_URL!,
@@ -128,12 +128,12 @@ Keep an existing public API route as an adapter until every caller uses the new 
 
 Import history into a separate SQLite database. Keep the source store unchanged until the new system passes validation and its rollback window ends. Stop writes or take a consistent export before conversion.
 
-Use `createBunHost().seed()` from `tardie/v1/bun/host` for imported history. This lower-level host opens one actor instance database; its actor name, instance ID, and database filename must match the host that will serve it. `seed` appends a complete batch without waking the actor, so recorded conversations do not run again during import.
+Use `createBunHost().seed()` from `tardie/deprecated/platform/bun/host` for imported history. This lower-level host opens one actor instance database; its actor name, instance ID, and database filename must match the host that will serve it. `seed` appends a complete batch without waking the actor, so recorded conversations do not run again during import.
 
 ```ts
 import { join } from "node:path"
-import { createBunHost } from "tardie/v1/bun/host"
-import type { Event } from "tardie/v1/core/event"
+import { createBunHost } from "tardie/deprecated/platform/bun/host"
+import type { Event } from "tardie/deprecated/core/event"
 import definition from "./actor"
 
 const storage = ".tardigrade/imported"

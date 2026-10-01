@@ -2,8 +2,8 @@ import { BunServices } from "@effect/platform-bun"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { join } from "node:path"
 import { Layer, Schedule } from "effect"
-import { defineActor } from "tardie/v1/core"
-import { createBunHost, remoteBackupFromKeyValueStore, restoreHostCheckpoint } from "tardie/v1/bun"
+import { defineActor } from "tardie/deprecated/core"
+import { createBunHost, remoteBackupFromKeyValueStore, restoreHostCheckpoint } from "tardie/deprecated/platform/bun"
 
 const [mode, directory] = Bun.argv.slice(2)
 if (mode === undefined || directory === undefined) throw new Error("mode and directory are required")

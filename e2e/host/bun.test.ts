@@ -4,11 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
-import { defineActor } from "tardie"
-import { defineActor as defineCoreActor } from "tardie/core"
-import { threadSupervisor } from "tardie/v1/core"
-import { createHost } from "tardie/v1/bun"
-import { NativeOutputSupport, agentMessageMethod, infer, nativeOutput } from "tardie/v1/agent"
+import { defineActor } from "tardie/deprecated"
+import { defineActor as defineCoreActor } from "tardie/deprecated/core"
+import { threadSupervisor } from "tardie/deprecated/core"
+import { createHost } from "tardie/deprecated/platform/bun"
+import { NativeOutputSupport, agentMessageMethod, infer, nativeOutput } from "tardie/deprecated/agent"
 
 const meeseeksFor = (define: typeof defineActor) => define("meeseeks", { message: agentMessageMethod }, [infer([nativeOutput], { models: { default: { provider: "test", model_id: "deterministic" }, allow: "*" } })])
 const meeseeks = meeseeksFor(defineActor)
