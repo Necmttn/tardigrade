@@ -1,7 +1,17 @@
-import type { Effect } from "effect"
+import { Schema, type Effect } from "effect"
 import type { CoreEvent } from "./lifecycle"
 
-export type Recorded<Event> = Event | CoreEvent
+// RecordMetadata carries host admission wall time separately from domain payloads.
+export const RecordMetadata = Schema.Struct({
+  recordedAt: Schema.optionalKey(Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER))),
+})
+export type RecordMetadata = typeof RecordMetadata.Type
+
+export type RuntimeEvent<Event> = Event | CoreEvent
+
+export interface Recorded<Event> extends RecordMetadata {
+  readonly event: RuntimeEvent<Event>
+}
 
 export interface StoredCheckpoint {
   readonly position: number

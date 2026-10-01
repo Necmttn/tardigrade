@@ -1,6 +1,7 @@
 import { Context, Option, Schema } from "effect"
 import { Atom as NativeAtom } from "effect/unstable/reactivity"
 import { atom, type Atom } from "./atom"
+import type { RecordMetadata } from "./journal"
 import { EventLog, eventLogContext } from "./services/event-log"
 
 export interface DurableAtomCheckpoint<State = unknown> {
@@ -32,7 +33,7 @@ export function durableAtom<State, Event>(options: {
   readonly input: Schema.Schema<Event>
   readonly schema: Schema.Schema<State>
   readonly initial: NoInfer<State>
-  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>) => NoInfer<State>
+  readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata) => NoInfer<State>
 }): DurableAtom<State, Event> {
   const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
@@ -52,6 +53,7 @@ export function durableAtom<State, Event>(options: {
     const configuredDurable = service.durable
     const seed = (typeof configuredDurable === "function" ? configuredDurable()?.get(options.name) : configuredDurable?.get(options.name)) as DurableAtomCheckpoint<State> | undefined
     const events = get(source)
+    const records = service.records ? get(service.records) : undefined
     const previous = Option.getOrUndefined(get.self<Frame>())
     const sameSource = previous !== undefined && previous.source === source
     if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
@@ -61,7 +63,9 @@ export function durableAtom<State, Event>(options: {
     for (let index = Math.max(0, start); index < events.length; index++) {
       const event = events[index]
       if (!accepts(event)) continue
-      const next = options.reduce(state, event)
+      const recordedAt = records?.[index]?.recordedAt
+      const metadata = recordedAt === undefined ? {} : { recordedAt }
+      const next = options.reduce(state, event, metadata)
       if (!Object.is(next, state)) validate(next)
       state = next
     }

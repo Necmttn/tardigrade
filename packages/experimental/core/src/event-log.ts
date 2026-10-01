@@ -3,12 +3,12 @@ import { isDeepStrictEqual } from "node:util"
 import { atom, type Atom } from "./atom"
 import { EventLog } from "./services/event-log"
 import { createStore } from "./store"
-import { createEventSource } from "./event-source"
+import { createRecordSource } from "./event-source"
 import type { ActRequest, ActCancellation } from "./act"
 import { ExecutionResult } from "./execution-result"
 import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled, type EffectCancelled } from "./lifecycle"
 import { effectKey, EffectRef } from "./effect-ref"
-import type { Recorded } from "./journal"
+import { RecordMetadata, type Recorded, type RuntimeEvent } from "./journal"
 import { type EffectWork, type IdentifiedEffectValue, type ExecutionHandle, type Proposed, type ServicesOf } from "./effects"
 import { DurableAtomCheckpoint } from "./durable"
 import { PromiseNotReady } from "./errors"
@@ -33,6 +33,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   type DeferredWork = IdentifiedEffectValue<ServicesOf<EffectValues>> & { readonly handle: ExecutionHandle }
   const disposers = new Set<() => void>()
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
+  const validateMetadata = Schema.decodeUnknownSync(RecordMetadata)
   const validateCore = Schema.decodeUnknownSync(Schema.toType(CoreEvent), { onExcessProperty: "error" })
   const freeze = <Value>(value: Value): Value => {
     if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
@@ -42,13 +43,17 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     return value
   }
-  const eventOf = (record: unknown) => {
-    if (typeof record !== "object" || record === null || Array.isArray(record)) throw new Error("Domain event must be an object")
-    if ("effect" in record) throw new Error("Domain effect metadata is not supported")
-    return freeze(structuredClone(hasCoreEventType(record) ? validateCore(record) : validate(record)))
+  const eventOf = (event: unknown): RuntimeEvent<Event> => {
+    if (typeof event !== "object" || event === null || Array.isArray(event)) throw new Error("Domain event must be an object")
+    if ("effect" in event) throw new Error("Domain effect metadata is not supported")
+    return freeze(structuredClone(hasCoreEventType(event) ? validateCore(event) : validate(event)))
+  }
+  const recordOf = (record: Recorded<Event>): Recorded<Event> => {
+    return freeze({ ...validateMetadata(record), event: eventOf(record.event) })
   }
   type Snapshot = {
-    readonly events: readonly Recorded<Event>[]
+    readonly events: readonly RuntimeEvent<Event>[]
+    readonly records: readonly Recorded<Event>[]
     readonly position: number
     readonly seed: EffectCheckpoint | undefined
     readonly bindings: ReadonlyMap<object, EffectRef>
@@ -59,7 +64,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     readonly cancellations: () => readonly EffectCancelled[]
     readonly cancelled: () => readonly ActCancellation[]
     readonly deliveries: () => readonly Event[]
-    readonly followups: (event: Recorded<Event>) => readonly object[]
+    readonly followups: (event: RuntimeEvent<Event>) => readonly object[]
     readonly pending: () => readonly EffectRequested[]
     readonly effect: (ref: EffectRef) => { readonly request: EffectRequested; readonly settlement?: EffectSettled; readonly cancellation?: EffectCancelled } | undefined
     readonly promise: (ref: EffectRef) => PromiseSettled | undefined
@@ -67,7 +72,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   }
   const createEngine = (history: readonly Recorded<Event>[], seed?: EffectCheckpoint) => {
     const offset = seed?.position ?? 0
-    const source = createEventSource<Recorded<Event>>()
+    const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
     const durable = new Map(seed?.durable.map(entry => [entry.name, entry] as const))
     const coreRequests = new Map<string, EffectRequested>()
@@ -82,6 +87,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }
     const store = createStore(Context.make(EventLog, {
       events: source.events,
+      records: source.records,
       bindings,
       position: seed?.position ?? 0,
       durable,
@@ -90,7 +96,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     }))
     const actReferences = new Map<object, EffectRef>()
     const actOwners = new Map<object, string>()
-    let records: readonly Recorded<Event>[] = store.get(source.events)
+    let records: readonly Recorded<Event>[] = store.get(source.records)
     let disposed = false
     const dispose = () => {
       if (disposed) return
@@ -233,15 +239,16 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       if (!settlement) throw new PromiseNotReady(event.ref)
       if (settlement.outcome.status !== "fulfilled") throw new Error("Promise settlement requires successful effect settlement")
     }
-    const append = (event: Recorded<Event>) => {
+    const append = (record: Recorded<Event>) => {
+      const event = record.event
       if (Schema.is(CoreEvent)(event)) {
         const key = effectKey(event.ref)
         if (event.type === "EffectRequested") {
           if (coreRequests.has(key)) {
             const prior = coreRequests.get(key)
             if (!isDeepStrictEqual(prior, event)) throw new Error("Conflicting core effect request")
-            source.append(store, [event])
-            records = store.get(source.events)
+            source.append(store, [record])
+            records = store.get(source.records)
             effects()
             return
           }
@@ -269,21 +276,22 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           promiseSettlements.set(key, event)
         }
       }
-      source.append(store, [event])
-      records = store.get(source.events)
+      source.append(store, [record])
+      records = store.get(source.records)
       effects()
     }
     try {
       effects()
       restoredRefs.clear()
-      for (const raw of history) append(eventOf(raw))
+      for (const raw of history) append(recordOf(raw))
     } catch (error) {
       dispose()
       throw error
     }
     return {
       seed,
-      get events() { return records },
+      get events() { return store.get(source.events) },
+      get records() { return records },
       get position() { return offset + records.length },
       get disposed() { return disposed },
       append,
@@ -297,7 +305,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
           ...(result?.type === "promise" ? { handle: result.handle } : {}) }
       }),
       deliveries: () => deliveries,
-      followups: (event: Recorded<Event>): readonly object[] => {
+      followups: (event: RuntimeEvent<Event>): readonly object[] => {
         if (!Schema.is(CoreEvent)(event)) return []
         const request = acts.get(effectKey(event.ref))
         if (!request) return []
@@ -352,7 +360,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const current = engines.get(snapshot)
     if (!current) throw new Error("Snapshot belongs to another event log")
     if (!current.disposed && current.events.length === snapshot.events.length) return current
-    const restored = createEngine(snapshot.events, snapshot.seed)
+    const restored = createEngine(snapshot.records, snapshot.seed)
     restored.restoreBindings(snapshot.bindings)
     engines.set(snapshot, restored)
     return restored
@@ -364,6 +372,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const values = Object.freeze(engine.view())
     const snapshot: Snapshot = Object.freeze({
       events: engine.events,
+      records: engine.records,
       position: engine.position,
       seed: engine.seed,
       bindings: engine.bindings(),
@@ -374,7 +383,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       cancellations: () => cancellations,
       cancelled: () => engineOf(snapshot).cancelled(),
       deliveries: () => deliveries,
-      followups: (event: Recorded<Event>) => engineOf(snapshot).followups(event),
+      followups: (event: RuntimeEvent<Event>) => engineOf(snapshot).followups(event),
       pending: () => engineOf(snapshot).pending(),
       effect: (ref: EffectRef) => engineOf(snapshot).effect(ref),
       promise: (ref: EffectRef) => engineOf(snapshot).promise(ref),
@@ -395,7 +404,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
   return {
     get initial() { return replay([]) },
     replay,
-    append: (snapshot: Snapshot, event: Recorded<Event>): Snapshot => {
+    append: (snapshot: Snapshot, event: RuntimeEvent<Event>, metadata: RecordMetadata = {}): Snapshot => {
       const record = eventOf(event)
       const engine = engineOf(snapshot)
       if (Schema.is(CoreEvent)(record)) {
@@ -418,7 +427,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
         if (record.type === "PromiseSettled") engine.validatePromise(record)
       }
       try {
-        engine.append(record)
+        engine.append(recordOf({ event: record, ...metadata }))
         return snapshotOf(engine)
       } catch (error) {
         engine.dispose()
