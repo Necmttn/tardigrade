@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect"
 import { effectAtom, eventValue, RuntimeError, type ActRequest, type ActService, type EventValue } from "@clavia/tardigrade-experimental-core"
+import { failureMessage } from "../acts"
 import { pendingTools } from "./tools"
 import { ToolCatalog } from "../context"
 import { ToolReturned, type ToolCalled } from "../event"
@@ -48,6 +49,18 @@ export function codeMode(options: { readonly name: string }) {
           error: error ?? (outcome?.status === "rejected" ? outcome.reason : bodyError) ?? null,
         } satisfies ToolReturned)
       } else if (Option.isSome(parsed)) {
+        {
+          const key = call.callId
+          let request = evaluations.get(key)
+          if (!request) {
+            request = EvaluateCode.request({
+              tag: key, input: { codeMode: name, callId: call.callId, code: parsed.value.code },
+              onSettled: outcome => [{ type: "CodeReturned", codeMode: name, callId: call.callId, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof CodeReturned.Type],
+            })
+            evaluations.set(key, request)
+          }
+          acts[name] = request
+        }
         const open = execution.calls.filter(call => call.outcome === null)
         if (open.length) {
           for (const packageCall of open) {
@@ -56,25 +69,14 @@ export function codeMode(options: { readonly name: string }) {
             if (!request) {
               request = ExecutePackage.request({
                 tag: key, input: { codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, package: packageCall.package, method: packageCall.method, input: packageCall.input },
-                onSettled: (outcome, ref) => [{ type: "PackageReturned", codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, ref, outcome } satisfies typeof PackageReturned.Type],
+                onSettled: (outcome, ref) => [{ type: "PackageReturned", codeMode: name, callId: call.callId, ordinal: packageCall.ordinal, ref, outcome: outcome.status === "rejected" ? { ...outcome, reason: failureMessage(outcome.reason) } : outcome } satisfies typeof PackageReturned.Type],
               })
               packages.set(key, request)
             }
             acts[`${name}.package.${packageCall.ordinal}`] = request
           }
         }
-        {
-          const key = call.callId
-          let request = evaluations.get(key)
-          if (!request) {
-            request = EvaluateCode.request({
-              tag: key, input: { codeMode: name, callId: call.callId, code: parsed.value.code },
-              onSettled: outcome => [{ type: "CodeReturned", codeMode: name, callId: call.callId, outcome } satisfies typeof CodeReturned.Type],
-            })
-            evaluations.set(key, request)
-          }
-          acts[name] = request
-        }
+
       }
       return { view, events, acts }
     })

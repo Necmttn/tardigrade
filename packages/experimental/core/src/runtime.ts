@@ -3,6 +3,7 @@ import type { Atom } from "./atom"
 import type { Recorded } from "./journal"
 import type { Proposed, ServicesOf } from "./effects"
 import type { EffectExecution } from "./effects"
+import type { EffectRef } from "./effect-ref"
 
 export type Requirements<Atoms> = Exclude<ServicesOf<Proposed<Atoms[keyof Atoms] extends Atom<infer Value> ? Value : never>>, EffectExecution>
 
@@ -18,8 +19,11 @@ export interface ActorRuntime<Event extends object> {
   readonly record: (event: Recorded<Event>) => Effect.Effect<void, Error>
   // send acknowledges validated message acceptance; runtime processing failures are reported through the store wait method.
   readonly send: (events: readonly Recorded<Event>[], when?: (get: ActorRuntime<Event>["get"]) => boolean) => Effect.Effect<void, Error>
+  // deliver scopes a result and its domain follow-ups to the originating effect; cancellation suppresses that group.
+  readonly deliver: (ref: EffectRef, events: readonly Recorded<Event>[]) => Effect.Effect<void, Error>
   readonly fork: (id: string, work: Effect.Effect<void, Error>) => Effect.Effect<void, Error>
-  readonly cancel: (id: string) => Effect.Effect<void, Error>
+  readonly interrupt: (id: string) => Effect.Effect<void, Error>
+  readonly cancel: (ref: EffectRef, reason: Schema.Json) => Effect.Effect<void, Error>
 }
 
 export interface ActorSetup<Event extends object, Atoms extends Readonly<Record<string, Atom<unknown>>>, Actions extends object> {

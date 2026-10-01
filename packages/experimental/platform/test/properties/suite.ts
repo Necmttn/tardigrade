@@ -4,9 +4,18 @@ import { promiseSettlementOrder } from "../../../host/properties/promise-settlem
 import { referenceAcceptanceAtomicity } from "../../../host/properties/reference-acceptance-atomicity"
 import { ownedProducerRecovery, externalProducerObservation } from "../../../host/properties/deferred-recovery"
 
+import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "../../../host/properties/cancellation"
+
 import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 
+import { agentCancellationRecovery, codeModeCancellationRecovery } from "./agent-cancellation"
+
 export const propertyCases = {
+  agentCancellationRecovery: () => fc.assert(agentCancellationRecovery, HOST_PROPERTY_OPTIONS),
+  codeModeCancellationRecovery: () => fc.assert(codeModeCancellationRecovery, HOST_PROPERTY_OPTIONS),
+  cancellationBatchIsolation: () => fc.assert(cancellationBatchIsolation, HOST_PROPERTY_OPTIONS),
+  cancellationForwarding: () => fc.assert(cancellationForwarding, HOST_PROPERTY_OPTIONS),
+  cancellationTerminality: () => fc.assert(cancellationTerminality, HOST_PROPERTY_OPTIONS),
   promiseSettlementOrder: () => fc.assert(promiseSettlementOrder, HOST_PROPERTY_OPTIONS),
   referenceAcceptanceAtomicity: () => fc.assert(referenceAcceptanceAtomicity, HOST_PROPERTY_OPTIONS),
   ownedProducerRecovery: () => fc.assert(ownedProducerRecovery, HOST_PROPERTY_OPTIONS),
