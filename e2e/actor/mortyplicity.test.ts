@@ -1,11 +1,11 @@
-import { toolCallOf } from "@clavia/tardigrade-agent/component/tool/machine"
+import { toolCallOf } from "@clavia/tardigrade-deprecated-agent/component/tool/machine"
 import { expect, test } from "bun:test"
 import fc from "fast-check"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
-import { alarmFired } from "@clavia/tardigrade-core/interaction/timeout"
-import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
-import type { Action } from "tardie/log/events"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { threadAddressOf } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
+import { alarmFired } from "@clavia/tardigrade-deprecated-core/interaction/timeout"
+import { threadCreatedOf } from "@clavia/tardigrade-deprecated-core/interaction/relations"
+import type { Action } from "tardie/v1/log/events"
 import {
   actor,
   agentMethods,
@@ -20,9 +20,9 @@ import {
   permissions,
   requestPermissionMethod,
   validateActor
-} from "tardie"
-import { agentsPackage } from "tardie/packages/agents"
-import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
+} from "tardie/v1"
+import { agentsPackage } from "tardie/v1/packages/agents"
+import { workspacePackage } from "@clavia/tardigrade-deprecated-code/package/workspace"
 import { actorScenario, childThreadsOf, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 
 type Outcome = "grant" | "deny" | "fail" | "timeout"

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Schema } from "effect"
-import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
+import { legacyActorMethod } from "@clavia/tardigrade-deprecated-core/actor/method-compat"
 import { connect } from "./connect"
 import { ProblemError } from "./problem"
 

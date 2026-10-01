@@ -1,4 +1,4 @@
-import type { Actor } from "@clavia/tardigrade-core/actor"
+import type { Actor } from "@clavia/tardigrade-deprecated-core/actor"
 import {
   actor,
   agentMethods,
@@ -15,7 +15,7 @@ import {
   outputValidateOnce,
   workspacePackage,
   type AgentCatalog
-} from "tardie"
+} from "tardie/v1"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 
 

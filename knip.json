@@ -5,13 +5,25 @@
     "@clavia/tardigrade-ui"
   ],
   "workspaces": {
-    "packages/experimental/platform": {
-      "entry": ["test/workerd/fixture.worker.ts"],
-      "project": ["src/**/*.ts!", "test/**/*.ts"]
+    "packages/platform": {
+      "entry": [
+        "test/workerd/fixture.worker.ts",
+        "test/worker-loader/fixture.worker.ts",
+        "test/worker-loader/celld/worker.ts"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.ts",
+        "*.config.ts"
+      ]
     },
-    "packages/experimental/examples": {
-      "entry": ["*.ts!"],
-      "project": ["**/*.ts"]
+    "examples/atoms": {
+      "entry": [
+        "*.ts!"
+      ],
+      "project": [
+        "**/*.ts"
+      ]
     },
     ".": {
       "ignoreDependencies": [
@@ -34,7 +46,10 @@
       ]
     },
     "examples/react-rlm-chat/server": {
-      "entry": ["*.test.ts", "*.workers.ts"],
+      "entry": [
+        "*.test.ts",
+        "*.workers.ts"
+      ],
       "project": [
         "*.ts"
       ]
@@ -49,12 +64,7 @@
         ]
       }
     },
-    "platform/*": {
-      "project": [
-        "src/**/*.ts"
-      ]
-    },
-    "platform/cloudflare": {
+    "packages/deprecated/platform/cloudflare": {
       "entry": [
         "test/fixture.worker.ts",
         "vitest.e2e.config.ts",
@@ -73,24 +83,15 @@
         "@smithy/node-http-handler!"
       ]
     },
-    "platform/worker-loader": {
-      "entry": [
-        "test/fixture.worker.ts",
-        "test/celld/worker.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "test/**/*.ts",
-        "*.config.ts"
-      ]
-    },
     "apps/*": {
       "project": [
         "src/**/*.{ts,tsx}"
       ]
     },
-    "apps/cli": {
-      "project": ["src/**/*.ts"],
+    "apps/deprecated/cli": {
+      "project": [
+        "src/**/*.ts"
+      ],
       "ignoreDependencies": [
         "@effect/platform-node-shared"
       ]
@@ -114,6 +115,11 @@
       "project": [
         "src/**/*.{ts,tsx}!",
         "../../docs/**/*.mdx"
+      ]
+    },
+    "apps/cli": {
+      "project": [
+        "src/**/*.ts!"
       ]
     }
   }

@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src/shared/worker-loader"],
+  "exclude": ["src/shared/worker-loader/**/*.test.ts"]
+}

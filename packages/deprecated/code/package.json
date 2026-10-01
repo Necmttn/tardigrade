@@ -1,0 +1,47 @@
+{
+  "name": "@clavia/tardigrade-deprecated-code",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Durable code execution over the tardigrade log.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/deprecated/code"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    "./execution/*": "./src/execution/*.ts",
+    "./package/*": "./src/package/*.ts",
+    "./sandbox/*": "./src/sandbox/*.ts",
+    "./storage/*": "./src/storage/*.ts",
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
+    "effect": "4.0.0-rc.115"
+  },
+  "devDependencies": {
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "fast-check": "^4.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

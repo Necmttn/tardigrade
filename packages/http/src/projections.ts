@@ -1,7 +1,7 @@
 import type { TreeBounds } from "@clavia/tardigrade-client/contract"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { formatThreadAddress } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
+import { threadCreatedOf } from "@clavia/tardigrade-deprecated-core/interaction/relations"
 export type ThreadStatus = "settled" | "running" | "blocked" | "failed"
 
 export type ThreadStatusOf = (events: ReadonlyArray<Event>) => ThreadStatus

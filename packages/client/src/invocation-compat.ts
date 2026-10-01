@@ -1,4 +1,4 @@
-import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
+import type { InvocationCoordinate } from "@clavia/tardigrade-deprecated-core/interaction"
 import type { ActorCallRef } from "./client"
 
 // httpCallOf converts invocation references and legacy current-epoch handles into HTTP coordinates.

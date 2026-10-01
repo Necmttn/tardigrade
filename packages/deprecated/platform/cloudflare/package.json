@@ -1,0 +1,44 @@
+{
+  "name": "@clavia/tardigrade-deprecated-cloudflare",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Cloudflare Durable Object host binding for tardigrade.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/deprecated/platform/cloudflare"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-deprecated-agent": "workspace:*",
+    "@clavia/tardigrade-client": "workspace:*",
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-host": "workspace:*",
+    "@clavia/tardigrade-http": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "@effect/sql-sqlite-do": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115",
+    "@clavia/tardigrade-platform": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.119.0"
+  },
+  "scripts": {
+    "bundle": "wrangler deploy --dry-run --outdir .wrangler/bundle",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:workers": "vitest run --config vitest.config.ts"
+  }
+}

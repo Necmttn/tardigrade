@@ -1,8 +1,8 @@
 import { Context, Duration, Effect, Layer, Stream, type Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { isForkRefused, resolveForkCheckpoint, type ForkRefused } from "@clavia/tardigrade-host/fork"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { isForkRefused, resolveForkCheckpoint, type ForkRefused } from "@clavia/tardigrade-deprecated-host/fork"
 
 import {
   Api,
@@ -81,7 +81,7 @@ const flatten = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary>
 const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>) =>
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
 
-// forkProblemOf maps a fork refusal to its problem document (packages/host/src/fork.ts, ForkRefusal).
+// forkProblemOf maps a fork refusal to its problem document (packages/deprecated/host/src/fork.ts, ForkRefusal).
 const forkProblemOf = (refused: ForkRefused) =>
   refused.refusal === "unknown-source"
     ? UnknownThread.of(refused.message)
@@ -197,7 +197,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         const threads = yield* service.ensure(params.id)
         return yield* threads.allocateRoot(payload.name, payload)
       }))
-      // The edge resolves an event id to a row against the source log it already read, so the host takes a row (packages/core/src/log/fork.ts, checkpointSeqOf). Refusals map by kind; anything else stays a defect.
+      // The edge resolves an event id to a row against the source log it already read, so the host takes a row (packages/deprecated/core/src/log/fork.ts, checkpointSeqOf). Refusals map by kind; anything else stays a defect.
       .handle("forkThread", ({ params, payload }) => Effect.gen(function* () {
         const threads = yield* actorOf(yield* Threads, params.id)
         const source = yield* logOf(threads.events, params.thread)

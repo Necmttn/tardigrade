@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { InferDelta, InferenceObserver } from "@clavia/tardigrade-agent"
+import type { InferDelta, InferenceObserver } from "@clavia/tardigrade-deprecated-agent"
 
 // InferenceStream fans ephemeral model text out to connected HTTP streams. A subscriber receives
 // only deltas produced after it subscribes, so the durable log remains the replay surface.

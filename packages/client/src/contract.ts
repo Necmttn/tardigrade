@@ -1,10 +1,10 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
-import { Event } from "@clavia/tardigrade-core/log/event"
-import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
-import { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
-import { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
-import { ForkSeq } from "@clavia/tardigrade-core/log"
+import { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { ActorInstanceId } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
+import { InvocationCoordinate } from "@clavia/tardigrade-deprecated-core/interaction"
+import { ThreadCoordinate } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
+import { ForkSeq } from "@clavia/tardigrade-deprecated-core/log"
 
 // V1_PREFIX prefixes every versioned route.
 export const V1_PREFIX = "/v1"
@@ -83,7 +83,7 @@ export const ThreadOccupied = problemKind("thread-occupied", "Thread Occupied", 
 // InvocationSettled reports that cancellation cannot change a completed or failed invocation.
 export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
 
-// ForkRequest is the fork body: exactly one of seq (a 1-based source row) or event (an event id the server resolves to its last row), plus an optional destination name. HttpApi payload typing cannot carry a schema union, so the shape is one struct with a refinement (packages/core/src/log/fork.ts, ForkCheckpoint).
+// ForkRequest is the fork body: exactly one of seq (a 1-based source row) or event (an event id the server resolves to its last row), plus an optional destination name. HttpApi payload typing cannot carry a schema union, so the shape is one struct with a refinement (packages/deprecated/core/src/log/fork.ts, ForkCheckpoint).
 const exactlyOneCheckpoint = <A extends { readonly seq?: number | undefined; readonly event?: string | undefined }>(value: A): value is A =>
   (value.seq === undefined) !== (value.event === undefined)
 
@@ -378,7 +378,7 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     success: ThreadCoordinate,
     error: [InvalidRequest.schema]
   }),
-  // forkThread copies source rows 1..seq onto a new root. The body names the checkpoint by row or by event id; the reply carries the row that was used (packages/core/src/log/fork.ts).
+  // forkThread copies source rows 1..seq onto a new root. The body names the checkpoint by row or by event id; the reply carries the row that was used (packages/deprecated/core/src/log/fork.ts).
   HttpApiEndpoint.post("forkThread", "/v1/actors/:id/threads/:thread/fork", {
     params: RuntimeThreadParams,
     payload: ForkRequest,

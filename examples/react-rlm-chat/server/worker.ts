@@ -1,8 +1,8 @@
 import { providerLayer } from "tardie/model/providers/openrouter"
 import definition from "./actor"
-import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom, objectStorageFromR2, type Env, type WorkerHost } from "tardie/worker"
+import { defineWorkerHost, workerHttp, workerModelServices, modelScopeFrom, objectStorageFromR2, type Env, type WorkerHost } from "tardie/v1/cloudflare"
 import { Effect, Layer } from "effect"
-import { ObjectStorage } from "tardie/agent"
+import { ObjectStorage } from "tardie/v1/agent"
 import { uploadLimit, uploadResponse } from "./uploads"
 import modelLock from "./models.lock.json"
 
@@ -23,7 +23,7 @@ const host: WorkerHost<ChatEnv> = defineWorkerHost(definition, {
 })
 const http = workerHttp(host)
 
-// host exposes the HTTP handler and Durable Object classes (platform/cloudflare/test/actor.workers.ts).
+// host exposes the HTTP handler and Durable Object classes (packages/deprecated/platform/cloudflare/test/actor.workers.ts).
 // HTTP request -> Worker handler
 //                  +-- ActorDO: allocates and tracks threads
 //                  +-- ThreadDO: stores events and executes a thread

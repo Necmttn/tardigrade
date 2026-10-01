@@ -1,14 +1,18 @@
-import { testInferenceLayer } from "@clavia/tardigrade-agent/testing/model"
+import { testInferenceLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
-import { defineActor, threadSupervisor } from "tardie/core"
-import { createHost } from "tardie/bun"
-import { NativeOutputSupport, agentMessageMethod, infer, nativeOutput } from "tardie/agent"
+import { defineActor } from "tardie"
+import { defineActor as defineCoreActor } from "tardie/core"
+import { threadSupervisor } from "tardie/v1/core"
+import { createHost } from "tardie/v1/bun"
+import { NativeOutputSupport, agentMessageMethod, infer, nativeOutput } from "tardie/v1/agent"
 
-const meeseeks = defineActor("meeseeks", { message: agentMessageMethod }, [infer([nativeOutput], { models: { default: { provider: "test", model_id: "deterministic" }, allow: "*" } })])
+const meeseeksFor = (define: typeof defineActor) => define("meeseeks", { message: agentMessageMethod }, [infer([nativeOutput], { models: { default: { provider: "test", model_id: "deterministic" }, allow: "*" } })])
+const meeseeks = meeseeksFor(defineActor)
+const coreMeeseeks = meeseeksFor(defineCoreActor)
 
 const missingRequirements = () => {
   // @ts-expect-error inferenceClient and NativeOutputSupport must be supplied by the caller.
@@ -82,7 +86,7 @@ test("public Bun host supplies component requirements across four threads", asyn
   const storage = await mkdtemp(join(tmpdir(), "meeseeks-example-"))
   let calls = 0
   const openHost = () => createHost({
-    actor: meeseeks,
+    actor: coreMeeseeks,
     storage,
     layersFor: (thread) => Layer.mergeAll(
       Layer.succeed(NativeOutputSupport, { withTools: true }),

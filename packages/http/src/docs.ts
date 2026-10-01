@@ -3,7 +3,7 @@ import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
 import { HttpApi, HttpApiGroup, HttpApiScalar, OpenApi } from "effect/unstable/httpapi"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 
-// UNAUTHENTICATED_PATHS names public discovery routes (apps/server/src/contract.test.ts, platform/cloudflare/test/actor.workers.ts).
+// UNAUTHENTICATED_PATHS names public discovery routes (apps/server/src/contract.test.ts, packages/deprecated/platform/cloudflare/test/actor.workers.ts).
 export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", "/v1/providers", "/v1/models", OPENAPI_PATH, DOCS_PATH]
 
 const scalarCss = `
@@ -38,7 +38,7 @@ const scalarCss = `
 }
 `.trim()
 
-// layerApiDocs serves an API's OpenAPI document and Scalar reference (apps/server/src/contract.test.ts, platform/cloudflare/test/actor.workers.ts).
+// layerApiDocs serves an API's OpenAPI document and Scalar reference (apps/server/src/contract.test.ts, packages/deprecated/platform/cloudflare/test/actor.workers.ts).
 export const layerApiDocs = <Id extends string, Groups extends HttpApiGroup.Constraint>(api: HttpApi.HttpApi<Id, Groups>) =>
   Layer.mergeAll(
     HttpRouter.add("GET", OPENAPI_PATH, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api))),

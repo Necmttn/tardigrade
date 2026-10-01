@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Action } from "tardie/log/events"
+import type { Action } from "tardie/v1/log/events"
 import {
   actor,
   agentMethods,
@@ -13,9 +13,9 @@ import {
   nativeOutput,
   output,
   validateActor
-} from "tardie"
-import { agentsPackage } from "tardie/packages/agents"
-import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
+} from "tardie/v1"
+import { agentsPackage } from "tardie/v1/packages/agents"
+import { workspacePackage } from "@clavia/tardigrade-deprecated-code/package/workspace"
 import { actorScenario, childThreadsOf, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 
 const WORKER_RESULT = output({

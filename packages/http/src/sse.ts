@@ -1,6 +1,6 @@
 import { Duration, Effect, Queue, Stream } from "effect"
-import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
-import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
+import type { ThreadEventRow } from "@clavia/tardigrade-deprecated-core/log"
+import type { ActorThreadRecord } from "@clavia/tardigrade-deprecated-core/actor"
 import type { ActorThread, ThreadAdded, ThreadsSnapshot } from "@clavia/tardigrade-client/contract"
 import type { ActorThreads } from "./threads"
 import { publicThreadId } from "./thread-compat"

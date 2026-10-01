@@ -1,0 +1,44 @@
+{
+  "name": "@clavia/tardigrade-deprecated-cli",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "The tdg command: create projects, configure models, and interact with actors.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "apps/deprecated/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-deprecated-bun": "workspace:*",
+    "@clavia/tardigrade-deprecated-cloudflare": "workspace:*",
+    "@clavia/tardigrade-client": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "@clavia/tardigrade-server": "workspace:*",
+    "@effect/platform-bun": "4.0.0-rc.115",
+    "@effect/platform-node-shared": "4.0.0-rc.115",
+    "effect": "4.0.0-rc.115",
+    "jsonc-parser": "3.3.1",
+    "tardie": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "start": "bun run src/main.ts"
+  },
+  "bin": {
+    "tdg-deprecated": "./src/main.ts"
+  }
+}

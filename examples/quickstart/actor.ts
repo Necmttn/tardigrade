@@ -1,6 +1,6 @@
 import { Effect } from "effect"
-import { defineActor } from "tardie/core"
-import { agentMessageMethod, infer, outputValidateOnce, system, tool } from "tardie/agent"
+import { defineActor } from "tardie/v1/core"
+import { agentMessageMethod, infer, outputValidateOnce, system, tool } from "tardie/v1/agent"
 
 const actorName = "weather-agent"
 

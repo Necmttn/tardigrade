@@ -1,6 +1,6 @@
-import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
+import { bunHttpServices } from "@clavia/tardigrade-deprecated-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
-import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
+import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-deprecated-bun/create-host"
 import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
@@ -9,8 +9,8 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-host/transport/ingress"
-import type { Provider } from "@clavia/tardigrade-host/transport/provider"
+import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-deprecated-host/transport/ingress"
+import type { Provider } from "@clavia/tardigrade-deprecated-host/transport/provider"
 import {
   applyModelPolicy,
   ACTOR_ARTIFACT_VERSION,
@@ -20,10 +20,10 @@ import {
   type InferenceObserver,
   type ActorArtifactManifest,
   type Actor
-} from "tardie"
-import { type BunHostOptions } from "@clavia/tardigrade-bun/host"
-import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
+} from "tardie/v1"
+import { type BunHostOptions } from "@clavia/tardigrade-deprecated-bun/host"
+import { ThreadAllocator } from "@clavia/tardigrade-deprecated-core/actor/allocation"
+import { openBunActorRegistry } from "@clavia/tardigrade-deprecated-bun/registry"
 import {
   RESERVED_ACTOR,
   type ActorArtifact,

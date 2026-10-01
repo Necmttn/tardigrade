@@ -1,4 +1,4 @@
-import { testModelLockLayer } from "@clavia/tardigrade-agent/testing/model"
+import { testModelLockLayer } from "@clavia/tardigrade-deprecated-agent/testing/model"
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -6,9 +6,9 @@ import { join } from "node:path"
 import { Effect, Layer, ManagedRuntime, Stream } from "effect"
 import { LanguageModel, Response } from "effect/unstable/ai"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import { defineActor } from "tardie/core"
-import { createHost, objectStorageFromSqlite } from "tardie/bun"
-import { NativeOutputSupport, ObjectStorage, agentMessageMethod, cachedObjectStorage, infer, makeObjectStorage, nativeOutput, sqlObjectCache, type ObjectRef } from "tardie/agent"
+import { defineActor } from "tardie/v1/core"
+import { createHost, objectStorageFromSqlite } from "tardie/v1/bun"
+import { NativeOutputSupport, ObjectStorage, agentMessageMethod, cachedObjectStorage, infer, makeObjectStorage, nativeOutput, sqlObjectCache, type ObjectRef } from "tardie/v1/agent"
 
 const objectKeyOf = (object: ObjectRef) => `${object.algorithm}:${object.digest}`
 

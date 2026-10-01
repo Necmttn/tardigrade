@@ -1,1 +1,1 @@
-export * from "@clavia/tardigrade-bun"
+export * from "@clavia/tardigrade-deprecated-bun"

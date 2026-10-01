@@ -10,13 +10,13 @@ type Task = {
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
-const packages = ["tardie", "core", "code", "agent", "host", "channels", "client", "http", "model"]
-const experimental = ["core", "agent", "packages", "platform", "examples", "apps/cli"]
-const experimentalPkg = (name: string) => pkg(`experimental/${name}`)
-const platformPkg = (name: string) => `${root}platform/${name}`
-const platforms = ["bun", "worker-loader", "cloudflare"]
+const packages = ["tardie", "core", "agent", "libraries", "platform", "deprecated/core", "deprecated/code", "deprecated/agent", "deprecated/host", "channels", "client", "http", "model"]
+const examples = ["atoms"]
+const exampleRoot = (name: string) => `${root}examples/${name}`
+const platformPkg = (name: string) => pkg(`deprecated/platform/${name}`)
+const platforms = ["bun", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
-const apps = ["cli", "server", "voyager"]
+const apps = ["cli", "deprecated/cli", "server", "voyager"]
 const typecheckedApps = [...apps, "web"]
 const e2e = `${root}e2e`
 const examplePkg = (name: string) => `${root}examples/react-rlm-chat/${name}`
@@ -33,7 +33,7 @@ const tsconfigsIn = (directory: string): ReadonlyArray<string> =>
 const effectProjects = [
   ...tsconfigsIn(root),
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
-  ...experimental.flatMap((name) => tsconfigsIn(experimentalPkg(name))),
+  ...examples.flatMap((name) => tsconfigsIn(exampleRoot(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
   ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
@@ -76,20 +76,20 @@ const tasks: ReadonlyArray<Task> = [
   // Root tsconfig covers tools/*.ts; each package typechecks itself against the shared base.
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
-  ...experimental.map((name) => ({ id: `typecheck:experimental-${name}`, cwd: experimentalPkg(name), cmd: ["bun", "run", "typecheck"] })),
+  ...examples.map((name) => ({ id: `typecheck:example-${name}`, cwd: exampleRoot(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "tsc", "--noEmit", "-p", "tsconfig.workers.json"] },
   ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },
-  ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
-  { id: "test:experimental-platform", cwd: experimentalPkg("platform"), cmd: ["bun", "run", "test"] },
-  { id: "test:experimental-platform:workers", cwd: experimentalPkg("platform"), cmd: ["bun", "run", "test:workers"] },
+  ...packages.filter((name) => !["core", "agent", "libraries"].includes(name)).map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "run", "--if-present", "test"] })),
+  { id: "test:experimental-platform", cwd: pkg("platform"), cmd: ["bun", "run", "test"] },
+  { id: "test:experimental-platform:workers", cwd: pkg("platform"), cmd: ["bun", "run", "test:workers"] },
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "test:workers"] },
   { id: "test:platform-cloudflare:e2e", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "vitest", "run", "--config", "vitest.e2e.config.ts"] },
-  { id: "test:platform-worker-loader:workers", cwd: platformPkg("worker-loader"), cmd: ["bun", "run", "test:workers"] },
-  ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
+  { id: "test:platform-worker-loader:workers", cwd: pkg("platform"), cmd: ["bun", "run", "test:worker-loader"] },
+  ...apps.filter((name) => name !== "cli").map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "test:app-web", cwd: appPkg("web"), cmd: ["bun", "test"] },
   { id: "test:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "test"] },
   { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },

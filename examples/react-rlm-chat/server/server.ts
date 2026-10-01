@@ -1,6 +1,6 @@
 import { providerLayer } from "tardie/model/providers/openrouter"
 import { join } from "node:path"
-import { createBunHost, serve } from "tardie/bun"
+import { createBunHost, serve } from "tardie/v1/bun"
 import { bunModelServices } from "tardie/server/model-services"
 import definition from "./actor"
 

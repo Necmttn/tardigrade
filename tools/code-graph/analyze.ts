@@ -110,20 +110,20 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
   for (const edge of edges) {
     const from = byId.get(edge.source), to = byId.get(edge.target)
     if (!from || !to || from.test) continue
-    if (/^packages\/agent\/src\/component\/(budget|permissions)\//u.test(from.id) &&
-      /^packages\/agent\/src\/component\/(tool|code|infer)\//u.test(to.id)) {
+    if (/^packages\/deprecated\/agent\/src\/component\/(budget|permissions)\//u.test(from.id) &&
+      /^packages\/deprecated\/agent\/src\/component\/(tool|code|infer)\//u.test(to.id)) {
       violations.push({ rule: "policy-child-independent", source: edge.source, target: edge.target, line: edge.line,
         message: `${from.id} imports a governed child's implementation` })
     }
-    if ((to.id === "packages/core/src/component/runtime.ts" || to.id === "packages/core/src/component/composition/parent.ts") &&
-      !(from.package === "packages/core" ||
-        from.id === "packages/agent/src/runtime/render.ts" ||
-        from.id === "packages/agent/fixtures/component.ts")) {
+    if ((to.id === "packages/deprecated/core/src/component/runtime.ts" || to.id === "packages/deprecated/core/src/component/composition/parent.ts") &&
+      !(from.package === "packages/deprecated/core" ||
+        from.id === "packages/deprecated/agent/src/runtime/render.ts" ||
+        from.id === "packages/deprecated/agent/fixtures/component.ts")) {
       violations.push({ rule: "component-runtime-private", source: edge.source, target: edge.target, line: edge.line,
         message: `${from.id} imports private component runtime machinery` })
     }
-    if (!edge.typeOnly && from.id.startsWith("packages/agent/src/component/") &&
-      (to.id.startsWith("packages/agent/fixtures/") || to.id === "packages/agent/src/runtime/render.ts")) {
+    if (!edge.typeOnly && from.id.startsWith("packages/deprecated/agent/src/component/") &&
+      (to.id.startsWith("packages/deprecated/agent/fixtures/") || to.id === "packages/deprecated/agent/src/runtime/render.ts")) {
       violations.push({ rule: "component-authoring-only", source: edge.source, target: edge.target, line: edge.line,
         message: `${from.id} imports component activation or test machinery` })
     }
@@ -140,13 +140,13 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
   const outgoing = groupBy(edges.filter((edge) => !edge.typeOnly && !byId.get(edge.target)?.test), (edge) => edge.source)
   const entryRules = [
     {
-      start: "platform/bun/src/create-host.ts", rule: "host-without-http",
-      forbidden: (id: string) => byId.get(id)?.package === "packages/http" || id.startsWith("packages/host/src/transport/http/")
+      start: "packages/deprecated/platform/bun/src/create-host.ts", rule: "host-without-http",
+      forbidden: (id: string) => byId.get(id)?.package === "packages/http" || id.startsWith("packages/deprecated/host/src/transport/http/")
     },
     {
       start: "packages/http/src/http.ts", rule: "http-without-agent-runtime",
-      forbidden: (id: string) => id.startsWith("packages/agent/") &&
-        !["packages/agent/src/model/access.ts", "packages/agent/src/model/reference.ts"].includes(id)
+      forbidden: (id: string) => id.startsWith("packages/deprecated/agent/") &&
+        !["packages/deprecated/agent/src/model/access.ts", "packages/deprecated/agent/src/model/reference.ts"].includes(id)
     }
   ]
   for (const { start, rule, forbidden } of entryRules) {
@@ -165,9 +165,9 @@ export const boundaryViolations = (nodes: readonly GraphNode[], edges: readonly 
   return violations
 }
 
-const layerOf = (id: string): string => id.startsWith("platform/") || id === "packages/experimental/platform" || id.startsWith("packages/experimental/platform/") ? "platform"
-  : id.startsWith("apps/") || id.startsWith("examples/") || id.startsWith("packages/experimental/apps/") || id === "packages/experimental/examples" || id.startsWith("packages/experimental/examples/") ? "app"
-  : id === "packages/tardie" ? "facade" : id.startsWith("packages/") ? id.split("/")[1]! : "tooling"
+const layerOf = (id: string): string => id.startsWith("packages/deprecated/platform/") || id === "packages/platform" || id.startsWith("packages/platform/") ? "platform"
+  : id.startsWith("apps/") || id.startsWith("examples/") || id.startsWith("packages/experimental/apps/") || id === "examples/atoms" || id.startsWith("examples/atoms/") ? "app"
+  : id === "packages/tardie" ? "facade" : id.startsWith("packages/deprecated/") ? id.split("/")[2]! : id.startsWith("packages/") ? id.split("/")[1]! : "tooling"
 
 // analyzeGraph resolves working-tree source imports through Bun's workspace and TypeScript resolution.
 export const analyzeGraph = async (root: string): Promise<GraphData> => {

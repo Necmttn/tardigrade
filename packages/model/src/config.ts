@@ -47,7 +47,7 @@ const stringsOf = (value: unknown): ReadonlyArray<string> =>
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
-// modelSettingsOf validates provider options and model metadata (apps/cli/src/setup.test.ts).
+// modelSettingsOf validates provider options and model metadata (apps/deprecated/cli/src/setup.test.ts).
 export const modelSettingsOf = (protocol: ModelProtocol, value: unknown): Record<string, { readonly options?: Schema.JsonObject; readonly metadata?: typeof ModelCatalogMetadata.Type }> | undefined => {
   let models: Record<string, { readonly options?: Schema.JsonObject; readonly metadata?: typeof ModelCatalogMetadata.Type }> | undefined
   if (value !== undefined) {

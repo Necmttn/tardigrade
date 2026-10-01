@@ -30,10 +30,10 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-deprecated-core": "workspace:*",
     "effect": "4.0.0-rc.115",
-    "@clavia/tardigrade-agent": "workspace:*",
-    "@clavia/tardigrade-code": "workspace:*",
+    "@clavia/tardigrade-deprecated-agent": "workspace:*",
+    "@clavia/tardigrade-deprecated-code": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*"
   },
   "devDependencies": {

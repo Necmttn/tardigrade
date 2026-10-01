@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun run ../../../apps/cli/src/main.ts build actor.ts",
+    "build": "bun run ../../../apps/deprecated/cli/src/main.ts build actor.ts",
     "deploy:cloudflare": "bun run --cwd ../web build && wrangler deploy",
     "dev:cloudflare": "bun run --cwd ../web build && wrangler dev --port 8787",
     "dev": "bun run server.ts",
-    "lint": "bun run ../../../apps/cli/src/main.ts lint actor.ts",
+    "lint": "bun run ../../../apps/deprecated/cli/src/main.ts lint actor.ts",
     "test": "bun test",
     "test:workers": "bun run --cwd ../web build && vitest run",
     "typecheck": "tsc --noEmit"

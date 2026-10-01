@@ -1,22 +1,22 @@
 import manifest0 from "../packages/tardie/package.json"
-import manifest1 from "../packages/agent/package.json"
-import manifest2 from "../packages/core/package.json"
-import manifest3 from "../packages/code/package.json"
-import manifest4 from "../packages/host/package.json"
+import manifest1 from "../packages/deprecated/agent/package.json"
+import manifest2 from "../packages/deprecated/core/package.json"
+import manifest3 from "../packages/deprecated/code/package.json"
+import manifest4 from "../packages/deprecated/host/package.json"
 import manifest5 from "../packages/channels/package.json"
 import manifest6 from "../packages/client/package.json"
-import manifest7 from "../platform/bun/package.json"
-import manifest8 from "../platform/worker-loader/package.json"
-import manifest9 from "../platform/cloudflare/package.json"
+import manifest7 from "../packages/deprecated/platform/bun/package.json"
+import manifest9 from "../packages/deprecated/platform/cloudflare/package.json"
 import manifest10 from "../packages/model/package.json"
 import manifest11 from "../packages/http/package.json"
 import manifest12 from "../apps/server/package.json"
-import manifest13 from "../apps/cli/package.json"
+import manifest13 from "../apps/deprecated/cli/package.json"
+import cli from "../apps/cli/package.json"
 
-import experimentalPlatform from "../packages/experimental/platform/package.json"
-import experimentalCore from "../packages/experimental/core/package.json"
-import experimentalAgent from "../packages/experimental/agent/package.json"
-import experimentalPackages from "../packages/experimental/packages/package.json"
+import platform from "../packages/platform/package.json"
+import core from "../packages/core/package.json"
+import agent from "../packages/agent/package.json"
+import libraries from "../packages/libraries/package.json"
 
 interface DependencyManifest {
   readonly name: string
@@ -26,24 +26,24 @@ interface DependencyManifest {
 }
 
 export const publishSources = [
-  { dir: "packages/experimental/agent", namespace: "experimental/agent", pkg: experimentalAgent },
-  { dir: "packages/experimental/packages", namespace: "experimental/packages", pkg: experimentalPackages },
-  { dir: "packages/experimental/platform", namespace: "experimental/platform", pkg: experimentalPlatform },
-  { dir: "packages/experimental/core", namespace: "experimental", pkg: experimentalCore },
+  { dir: "apps/cli", namespace: "cli", pkg: cli },
+  { dir: "packages/agent", namespace: "agent", pkg: agent },
+  { dir: "packages/libraries", namespace: "libraries", pkg: libraries },
+  { dir: "packages/platform", namespace: "platform", pkg: platform },
+  { dir: "packages/core", namespace: "core", pkg: core },
   { dir: "packages/tardie", namespace: "tardie", pkg: manifest0 },
-  { dir: "packages/agent", namespace: "agent", pkg: manifest1 },
-  { dir: "packages/core", namespace: "core", pkg: manifest2 },
-  { dir: "packages/code", namespace: "code", pkg: manifest3 },
-  { dir: "packages/host", namespace: "host", pkg: manifest4 },
+  { dir: "packages/deprecated/agent", namespace: "deprecated/agent", pkg: manifest1 },
+  { dir: "packages/deprecated/core", namespace: "deprecated/core", pkg: manifest2 },
+  { dir: "packages/deprecated/code", namespace: "deprecated/code", pkg: manifest3 },
+  { dir: "packages/deprecated/host", namespace: "deprecated/host", pkg: manifest4 },
   { dir: "packages/channels", namespace: "channels", pkg: manifest5 },
   { dir: "packages/client", namespace: "client", pkg: manifest6 },
-  { dir: "platform/bun", namespace: "bun", pkg: manifest7 },
-  { dir: "platform/worker-loader", namespace: "worker-loader", pkg: manifest8 },
-  { dir: "platform/cloudflare", namespace: "cloudflare", pkg: manifest9 },
+  { dir: "packages/deprecated/platform/bun", namespace: "deprecated/platform/bun", pkg: manifest7 },
+  { dir: "packages/deprecated/platform/cloudflare", namespace: "deprecated/platform/cloudflare", pkg: manifest9 },
   { dir: "packages/model", namespace: "model", pkg: manifest10 },
   { dir: "packages/http", namespace: "http", pkg: manifest11 },
   { dir: "apps/server", namespace: "server", pkg: manifest12 },
-  { dir: "apps/cli", namespace: "cli", pkg: manifest13 },
+  { dir: "apps/deprecated/cli", namespace: "deprecated/cli", pkg: manifest13 },
 ] as const
 
 export const REQUIRED_PUBLISH_DEPENDENCIES = [

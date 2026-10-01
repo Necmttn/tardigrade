@@ -55,7 +55,7 @@
           // Determinism. A replayed body re-runs from the top and must take the same path to each
           // call, so a wall clock, a random draw, or a socket reached from inside Effect code is a
           // replay hazard rather than a style choice. Model-authored code already gets this
-          // guarantee by shimming the same ambients (packages/code/src/sandbox/service.ts, Ambient;
+          // guarantee by shimming the same ambients (packages/deprecated/code/src/sandbox/service.ts, Ambient;
           // defaults.test.ts, "replay-stable ambients"), and the framework's own code holds itself
           // to it here. Most ambient rules outside Effect code are in the `off` block below because
           // a build script and a browser are not replayed. globalRandom stays on across helper calls.
@@ -121,7 +121,7 @@
           // A decision recorded once here is a decision a reader can find and change.
 
           // The host, the client, and an actor's own `act` are Promise surfaces on purpose: a
-          // caller holding a thread does not have to hold an Effect runtime (packages/host/src/
+          // caller holding a thread does not have to hold an Effect runtime (packages/deprecated/host/src/
           // host.ts, drive and wake; docs/getting-started/quickstart.mdx).
           "asyncFunction": "off",
           "newPromise": "off",
@@ -130,12 +130,12 @@
           "missingPipeableSignature": "off",
           "missedPipeableOpportunity": "off",
           // Service keys are named for the framework, not for the package path that happens to hold
-          // them: `tardigrade/Self` outlives a file move, `@clavia/tardigrade-core/actor/Self` does
+          // them: `tardigrade/Self` outlives a file move, `@clavia/tardigrade-deprecated-core/actor/Self` does
           // not.
           "deterministicKeys": "off",
           // The event log is JSON by contract. It is read by `clickhouse local`, by a SQLite
           // client, and by anything else that opens the file, so the bytes are the interface and a
-          // codec would hide it (platform/bun/src/host.ts).
+          // codec would hide it (packages/deprecated/platform/bun/src/host.ts).
           "preferSchemaOverJson": "off",
           // Composing every layer at one entry point is what the hosts do; the sites this flags are
           // those entry points.

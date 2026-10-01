@@ -1,6 +1,6 @@
-import type { Event } from "@clavia/tardigrade-core/event"
-import { existingInvocation, prepareMethodInvocation } from "@clavia/tardigrade-host/invocation"
-import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
+import type { Event } from "@clavia/tardigrade-deprecated-core/event"
+import { existingInvocation, prepareMethodInvocation } from "@clavia/tardigrade-deprecated-host/invocation"
+import type { InvocationCoordinate } from "@clavia/tardigrade-deprecated-core/interaction"
 
 // acceptedMethodRequest formats the HTTP receipt for an invocation coordinate.
 export const acceptedMethodRequest = (reference: InvocationCoordinate, deadlineAt: number) => ({
@@ -26,4 +26,4 @@ export const methodRequestLocation = (reference: InvocationCoordinate): string =
   return `/v1/actors/${encodeURIComponent(target.instance)}/threads/${encodeURIComponent(target.thread)}/methods/${encodeURIComponent(invocation.method)}/calls/${encodeURIComponent(invocation.id)}?actor=${encodeURIComponent(target.actor)}&epoch=${invocation.epoch}`
 }
 
-export { methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-host/invocation"
+export { methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-deprecated-host/invocation"

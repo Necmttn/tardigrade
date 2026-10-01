@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import fc from "fast-check"
-import { ACTOR_ARTIFACT_VERSION, agentMethods } from "@clavia/tardigrade-agent"
-import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
+import { ACTOR_ARTIFACT_VERSION, agentMethods } from "@clavia/tardigrade-deprecated-agent"
+import type { ActorMethodState } from "@clavia/tardigrade-deprecated-core/interaction/state"
 
 import { makeActorClient, makeControlClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"

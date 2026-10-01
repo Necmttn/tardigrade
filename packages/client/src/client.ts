@@ -1,12 +1,12 @@
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { boundaryOf } from "@clavia/tardigrade-agent/output/boundary"
-import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { boundaryOf } from "@clavia/tardigrade-deprecated-agent/output/boundary"
+import { turnEpochOf } from "@clavia/tardigrade-deprecated-code/execution/turns"
 import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
-import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
-import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
-import type { ForkCheckpoint } from "@clavia/tardigrade-core/log"
+import type { InvocationCoordinate } from "@clavia/tardigrade-deprecated-core/interaction"
+import type { ThreadCoordinate } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
+import type { ForkCheckpoint } from "@clavia/tardigrade-deprecated-core/log"
 import type { ForkedThread } from "./contract"
 import { httpCallOf } from "./invocation-compat"
 import type {
@@ -14,8 +14,8 @@ import type {
   ActorMethodInput,
   ActorMethodOutput,
   ActorMethods
-} from "@clavia/tardigrade-core/actor/method"
-import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
+} from "@clavia/tardigrade-deprecated-core/actor/method"
+import type { ActorMethodState } from "@clavia/tardigrade-deprecated-core/interaction/state"
 
 import {
   actorApiOf,
@@ -200,7 +200,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
   readonly allocateRoot: (actor: string, name?: string) => Promise<ThreadCoordinate>
-  // forkThread copies source rows through a checkpoint onto a new root and returns the destination with the row used (packages/core/src/log/fork.ts).
+  // forkThread copies source rows through a checkpoint onto a new root and returns the destination with the row used (packages/deprecated/core/src/log/fork.ts).
   readonly forkThread: (actor: string, thread: string, checkpoint: ForkCheckpoint, name?: string) => Promise<ForkedThread>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
@@ -455,7 +455,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a
     // TurnResumed, and a TurnResumed for a turn that is not failed derives nothing, so a race costs
     // an inert event rather than a wrong outcome. A duplicate costs nothing either: the assembly
-    // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/log/events.ts,
+    // keys TurnResumed by turn and epoch, so a second one absorbs (packages/deprecated/agent/src/log/events.ts,
     // agentKeys).
     resume: async (actor, thread, turn) => {
       const log = await logOf(actor, thread)
@@ -474,7 +474,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         })
       }
       // The next execution epoch, stamped the way the library stamps it
-      // (packages/agent/src/runtime/resume.ts, resumeTurn).
+      // (packages/deprecated/agent/src/runtime/resume.ts, resumeTurn).
       const epoch = turnEpochOf(log, turn)
       return append(actor, thread, {
         type: "TurnResumed",

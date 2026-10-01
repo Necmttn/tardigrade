@@ -31,7 +31,7 @@ An actor that requires an application Effect service can merge its layer with th
 
 ```ts title="server.ts"
 import { Layer, Schedule } from "effect"
-import { createBunHost, remoteBackupFromKeyValueStore } from "tardie/bun"
+import { createBunHost, remoteBackupFromKeyValueStore } from "tardie/v1/bun"
 import { bunModelServices } from "tardie/server/model-services"
 import { AppConfig } from "./application"
 import { remoteStore } from "./remote-store"

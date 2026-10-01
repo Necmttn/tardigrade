@@ -1,4 +1,4 @@
-import type { MessageContentPart, ObjectRef } from "tardie/agent"
+import type { MessageContentPart, ObjectRef } from "tardie/v1/agent"
 
 export interface UploadPolicy {
   readonly maxUploadBytes: number

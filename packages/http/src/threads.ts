@@ -1,9 +1,9 @@
 import { Context, Data, Effect } from "effect"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
-import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
-import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
-import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import type { ActorThreadRecord } from "@clavia/tardigrade-deprecated-core/actor"
+import type { ThreadEventRow } from "@clavia/tardigrade-deprecated-core/log"
+import type { ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
+import type { ThreadCoordinate } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
 import type { ActorSummary, ActorArtifact, ActorMetadata } from "@clavia/tardigrade-client/contract"
 
 export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
@@ -15,7 +15,7 @@ import type { ThreadStatus } from "./projections"
 
 export interface ActorThreads {
   readonly allocateRoot: (name?: string, options?: { readonly key?: string; readonly parent?: string }) => Effect.Effect<ThreadCoordinate>
-  // forkThread copies source rows 1..seq onto a new root. Refusals arrive as ForkRefused defects (packages/host/src/fork.ts).
+  // forkThread copies source rows 1..seq onto a new root. Refusals arrive as ForkRefused defects (packages/deprecated/host/src/fork.ts).
   readonly forkThread: (source: string, seq: number, name?: string) => Effect.Effect<ThreadCoordinate>
   readonly methods: ActorMethods
   readonly storage: ActorMetadata["storage"]
@@ -35,7 +35,7 @@ export interface ActorThreads {
   readonly settled: Effect.Effect<void>
 }
 
-// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/core/src/method/method.ts, ActorMethodDeclaration).
+// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/deprecated/core/src/method/method.ts, ActorMethodDeclaration).
 export class Threads extends Context.Service<
   Threads,
   {

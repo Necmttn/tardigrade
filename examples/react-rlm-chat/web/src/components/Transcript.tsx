@@ -1,4 +1,4 @@
-import { upcastError } from "@clavia/tardigrade-agent/log/upcast"
+import { upcastError } from "@clavia/tardigrade-deprecated-agent/log/upcast"
 import { Button } from "@base-ui/react/button"
 import { CaretRight, CircleNotch, Code, Package as PackageIcon } from "@phosphor-icons/react"
 import { Worm } from "lucide-react"
@@ -8,7 +8,7 @@ import type { Event, EventRow } from "@clavia/tardigrade-client"
 import { childThread, pendingChildCount, toolContent, toolTitle, value, waitingForResponse } from "../events"
 import { MarkdownMessage } from "./MarkdownMessage"
 import { Schema } from "effect"
-import { MessageContent } from "tardie/agent"
+import { MessageContent } from "tardie/v1/agent"
 
 export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   readonly empty: string

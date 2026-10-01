@@ -21,6 +21,17 @@ React derives UI from state, while Elm makes state transitions explicit function
 
 <p align="center"><code>{ view, transitions } = f(event log)</code></p>
 
+## API generations
+
+Unversioned imports and `tardie/v1/*` expose the component framework. `tardie/v2/*` exposes the atom framework. Each versioned namespace selects its actor definitions, methods, services, and platform hosts together.
+
+```ts
+import { defineActor as componentActor } from "tardie/v1/core"
+import { defineActor as atomActor } from "tardie/v2/core"
+```
+
+The filesystem places the atom framework in `packages/core`, `packages/agent`, and `packages/platform`. Component implementations live in `packages/deprecated`. Public import paths select the API generation independently of these directories.
+
 ## Why Tardigrade
 
 - **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent components.
@@ -80,7 +91,7 @@ Celld:
 celld deploy --config celld.jsonc
 ```
 
-See the [Cloudflare](platform/cloudflare/README.md) and [Celld](docs/platforms/celld.mdx) guides for platform configuration and secrets.
+See the [Cloudflare](packages/deprecated/platform/cloudflare/README.md) and [Celld](docs/platforms/celld.mdx) guides for platform configuration and secrets.
 
 ## Build your own harness
 
@@ -92,7 +103,7 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-The [`ComponentDefinition` interface](packages/core/src/component/machine.ts#L40) defines `initial`, `step`, and `output`. `tool` is a helper that creates a component from a tool specification and an Effect handler:
+The [`ComponentDefinition` interface](packages/deprecated/core/src/component/machine.ts#L40) defines `initial`, `step`, and `output`. `tool` is a helper that creates a component from a tool specification and an Effect handler:
 
 ```ts
 import { Effect } from "effect"

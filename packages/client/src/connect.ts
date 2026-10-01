@@ -1,6 +1,6 @@
-import { actorClient, type ActorClient as ConnectedActor, type CallOptions, type ClientThread } from "@clavia/tardigrade-core/actor/client"
-import type { ActorDefinition } from "@clavia/tardigrade-core/actor/definition"
-import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
+import { actorClient, type ActorClient as ConnectedActor, type CallOptions, type ClientThread } from "@clavia/tardigrade-deprecated-core/actor/client"
+import type { ActorDefinition } from "@clavia/tardigrade-deprecated-core/actor/definition"
+import type { ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
 import { actorHttpClient } from "./client"
 
 export const DEFAULT_CALL_POLL_INTERVAL_MS = 100

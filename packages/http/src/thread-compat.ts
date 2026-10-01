@@ -1,8 +1,8 @@
 import { Effect } from "effect"
 import type { ActorThreads } from "./threads"
 
-import { publicThreadId, resolveThreadId } from "@clavia/tardigrade-host/thread-compat"
-export { publicThreadId, resolveThreadId } from "@clavia/tardigrade-host/thread-compat"
+import { publicThreadId, resolveThreadId } from "@clavia/tardigrade-deprecated-host/thread-compat"
+export { publicThreadId, resolveThreadId } from "@clavia/tardigrade-deprecated-host/thread-compat"
 
 // withLegacyThreadIds adapts public operations without changing stored addresses or actor selection (thread-compat.test.ts).
 export const withLegacyThreadIds = (threads: ActorThreads): ActorThreads => {
