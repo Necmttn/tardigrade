@@ -1,16 +1,15 @@
 import { Effect, Random, Queue } from "effect"
 import { RuntimeError } from "@clavia/tardigrade-experimental-core"
-import { messages, type ChatMessage } from "@clavia/tardigrade-experimental-agent/messages"
-import { history } from "@clavia/tardigrade-experimental-agent/activity"
-import { turnOutput } from "@clavia/tardigrade-experimental-agent/result"
+import { messages, type ChatMessage } from "@clavia/tardigrade-experimental-agent/atoms/messages"
+import { history } from "@clavia/tardigrade-experimental-agent/atoms/activity"
+import { turnOutput } from "@clavia/tardigrade-experimental-agent/atoms/durable/inference"
 import type { PromptMessage } from "./prompt"
 import type { ChatThread } from "./threads"
 
 export const sendMessage = (thread: ChatThread, text: string) => Effect.gen(function* () {
   const turnId = `${yield* Random.nextInt}:${yield* Random.nextInt}`
   const start = thread.store.select(history).get().length
-  const receipt = yield* thread.methods.message({ text, turnId }, { key: turnId })
-  if (receipt.status !== "completed") return yield* Effect.fail(new RuntimeError(receipt.status === "failed" ? receipt.error : "Message invocation is still pending"))
+  yield* thread.invoke("message", { text }, { id: turnId })
   yield* thread.wait
   const events = thread.store.select(history).get()
   const result = events.findLast(event => event.type === "TurnSettled" && event.turnId === turnId)

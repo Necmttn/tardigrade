@@ -17,17 +17,14 @@
     {
       "files": [
         "packages/experimental/agent/src/atoms/**/*.ts",
-        "packages/experimental/agent/src/code-mode/**/*.ts",
+        "packages/experimental/agent/src/actor/**/*.ts",
+        "packages/experimental/agent/src/contracts/**/*.ts",
+        "packages/experimental/agent/src/index.ts",
         "packages/experimental/agent/src/agent.ts",
-        "packages/experimental/agent/src/acts.ts",
-        "packages/experimental/agent/src/context.ts",
-        "packages/experimental/agent/src/event.ts",
-        "packages/experimental/agent/src/projections.ts",
-        "packages/experimental/agent/src/budget-contracts.ts",
         "packages/experimental/apps/*/src/actor.ts",
         "packages/experimental/**/actors/**/*.ts",
-        "packages/experimental/host/src/supervisor.ts",
-        "packages/experimental/host/src/contracts.ts"
+        "packages/experimental/core/src/services/supervisor/graph.ts",
+        "packages/experimental/**/agents/**/*.ts"
       ],
       "plugins": [
         "typescript",
@@ -42,11 +39,6 @@
           {
             "paths": [
               {
-                "name": "@clavia/tardigrade-experimental-host",
-                "allowTypeImports": true,
-                "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
-              },
-              {
                 "name": "@clavia/tardigrade-experimental-packages",
                 "message": "Import data contracts from experimental-packages/types. Configure executable packages in a service layer.",
                 "allowTypeImports": true
@@ -55,7 +47,21 @@
                 "name": "@clavia/tardigrade-experimental-core",
                 "importNames": [
                   "EffectExecution",
-                    "runtimeAtom"
+                  "runtimeAtom",
+                  "createActorStore",
+                  "createActorExecution",
+                  "createThreadHost",
+                  "localActors",
+                  "Invocation",
+                  "Supervisor",
+                  "Promises",
+                  "RemoteBackup",
+                  "createInvocation",
+                  "createSupervisor",
+                  "createThreadStore",
+                  "createSupervisorStore",
+                  "createJournalStore",
+                  "remoteBackupFromKeyValueStore"
                 ],
                 "allowTypeImports": true,
                 "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
@@ -74,7 +80,7 @@
             ],
             "patterns": [
               {
-                "regex": "(^|/)(services|platform)(/|$)|^@effect/platform|^@clavia/tardigrade-experimental-platform(/|$)|^bun(:|$)|^cloudflare:",
+                "regex": "(^|/)(services|platform)(/|$)|^@effect/platform|^@clavia/tardigrade-experimental-platform(/|$)|^bun(:|$)|^cloudflare:|^@clavia/tardigrade-experimental-core/runtime/(execution|actors|layers|stores)(/|$)",
                 "allowTypeImports": true,
                 "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
               },
@@ -82,18 +88,15 @@
                 "group": [
                   "@clavia/tardigrade-experimental-packages/*",
                   "!@clavia/tardigrade-experimental-packages/types",
-                  "**/budget-tools",
                   "effect/Layer",
                   "effect/Effect",
                   "effect/FileSystem",
                   "effect/ChildProcessSpawner",
                   "effect/unstable/*",
                   "!effect/unstable/reactivity",
-                  "@clavia/tardigrade-experimental-host/*",
                   "@clavia/tardigrade-model",
                   "@clavia/tardigrade-model/*",
-                  "!@clavia/tardigrade-model/reference",
-                  "!@clavia/tardigrade-experimental-host/contracts"
+                  "!@clavia/tardigrade-model/reference"
                 ],
                 "allowTypeImports": true,
                 "message": "Actor modules propose acts. Move I/O and implementation wiring into a service layer."
