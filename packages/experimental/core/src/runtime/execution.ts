@@ -1,3 +1,4 @@
+import { initialStateSeed, type StateSeed } from "../initialise"
 import { RuntimeError, PromiseNotReady, ExecutionResult, EffectCancelled, effectKey, type EffectRef } from "./effects"
 import { createStore } from "../atoms/store"
 import { createRecordSource } from "./event-source"
@@ -97,6 +98,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
     let checkpointSeed: EffectCheckpoint | undefined
+    let initialState: StateSeed | undefined
     let checkpointPosition = 0
     const checkpointPolicy = options.checkpoint ?? DEFAULT_CHECKPOINT_POLICY
     if (checkpointPolicy.mode === "threshold" && (!Number.isSafeInteger(checkpointPolicy.options.everyEvents) || checkpointPolicy.options.everyEvents < 1)) return yield* Effect.fail(new RuntimeError("Checkpoint everyEvents must be a positive safe integer"))
@@ -112,7 +114,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       records: source.records,
       bindings,
       position: () => checkpointSeed?.position ?? 0,
-      durable: () => checkpointSeed ? new Map(checkpointSeed.durable.map(entry => [entry.name, entry] as const)) : undefined,
+      initialState: () => initialState ??= initialStateSeed(store.get(source.records), checkpointSeed),
       effect: ref => snapshot?.effect(ref),
       promise: ref => snapshot?.promise(ref),
     }))
@@ -570,7 +572,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         checkpoint: enqueue(Effect.gen(function* () {
           if (!options.journal) return yield* Effect.fail(new RuntimeError("Checkpointing requires a journal"))
           const checkpoint = snapshot.checkpoint()
-          if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending"))
+          if (!checkpoint) return yield* Effect.fail(new RuntimeError("Cannot checkpoint while work is pending or initialised atoms are unread"))
           const payload = yield* Effect.try({ try: () => encodeChecked(checkpoint), catch: RuntimeError.from })
           const digest = yield* checkpointDigest(payload).pipe(Effect.mapError(RuntimeError.from))
           yield* options.journal.appendWithCheckpoint(snapshot.position, [], { position: snapshot.position, payload, digest }).pipe(Effect.mapError(RuntimeError.from))

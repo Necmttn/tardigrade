@@ -9,9 +9,9 @@ import { ExecutionResult, type EffectCancelled, effectKey, EffectRef, type Execu
 import { EffectRequest, CoreEvent, hasCoreEventType, type EffectRequested, type EffectSettled, type PromiseSettled } from "./events"
 import { RecordMetadata, type Recorded, type RuntimeEvent, type JournalEvent } from "../services/journal"
 import type { EffectWork, IdentifiedEffectValue, Proposed, ServicesOf } from "../atoms/effect"
-import { DurableAtomCheckpoint } from "../atoms/durable"
 import { MessageDelivered, MessageReceived, isMessageReceived } from "../actor/message"
 import { ThreadCreated } from "../actor/thread"
+import { AtomState, initialStateSeed, StateInitialised, type StatefulAtom, type StateSeed } from "../initialise"
 
 type Values<Atoms> = { readonly [Key in keyof Atoms]: Atoms[Key] extends Atom<infer Value> ? Value : never }
 
@@ -82,7 +82,8 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const offset = seed?.position ?? 0
     const source = createRecordSource<Event>()
     const bindings = atom<ReadonlyMap<object, EffectRef>>(new Map())
-    const durable = new Map(seed?.durable.map(entry => [entry.name, entry] as const))
+    let initialState: StateSeed | undefined
+    const initialisedNames = new Set(seed?.durable.map(entry => entry.name))
     const coreRequests = new Map<string, EffectRequested>()
     const coreSettlements = new Map<string, EffectSettled>()
     const coreCancellations = new Map<string, EffectCancelled>()
@@ -98,7 +99,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       records: source.records,
       bindings,
       position: seed?.position ?? 0,
-      durable,
+      initialState: () => initialState ??= initialStateSeed(store.get(source.records), seed),
       effect,
       promise: ref => promiseSettlements.get(effectKey(ref)),
     }))
@@ -152,15 +153,15 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       })
       // TODO: Checkpoint capture must preserve recovery for unread durable atoms absent from the registry; suffix-only restore currently loses their prefix state (quint/checkpoint/lazyAtomCheckpoint.qnt, readyEquivalent, initSkipPrefix).
       const durable = [...store.nodes().values()].flatMap(node => {
-        const capture = (node.atom as Partial<Record<typeof DurableAtomCheckpoint, unknown>>)[DurableAtomCheckpoint]
-        if (typeof capture !== "function") return []
-        return [capture(store.get, offset + records.length) as { readonly name: string; readonly state: unknown; readonly position: number }]
+        const codec = (node.atom as Partial<StatefulAtom>)[AtomState]
+        return codec ? [{ name: codec.name, state: codec.encode(store.get), position: offset + records.length }] : []
       })
       const names = new Set<string>()
       for (const entry of durable) {
         if (names.has(entry.name)) throw new Error(`Duplicate durable atom checkpoint name: ${entry.name}`)
         names.add(entry.name)
       }
+      if ([...initialisedNames].some(name => !names.has(name))) return undefined
       return Object.freeze({
         position: offset + records.length,
         durable: Object.freeze(durable),
@@ -250,7 +251,11 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     const append = (record: Recorded<Event>) => {
       const event = record.event
       if (Schema.is(ThreadCreated)(event) && offset + records.length !== 0) throw new Error("Thread creation must be the first journal record")
-      if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
+      if (Schema.is(StateInitialised)(event)) {
+        if (offset !== 0 || records.length > 1 || records.some(record => !Schema.is(ThreadCreated)(record.event))) throw new Error("State initialisation requires a fresh journal")
+        for (const name of Object.keys(event.initialState)) initialisedNames.add(name)
+      }
+      if (Schema.is(CoreEvent)(event) && event.type !== "ThreadCreated" && event.type !== "StateInitialised" && event.type !== "MessageDelivered" && !isMessageReceived(event)) {
         const key = effectKey(event.ref)
         if (event.type === "EffectRequested") {
           if (coreRequests.has(key)) {
@@ -323,7 +328,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
       }),
       deliveries: () => deliveries,
       followups: (event: JournalEvent<Event>): readonly object[] => {
-        if (!Schema.is(CoreEvent)(event) || isMessageReceived(event) || event.type === "ThreadCreated" || event.type === "MessageDelivered") return []
+        if (!Schema.is(CoreEvent)(event) || isMessageReceived(event) || event.type === "ThreadCreated" || event.type === "StateInitialised" || event.type === "MessageDelivered") return []
         const request = acts.get(effectKey(event.ref))
         if (!request) return []
         if (event.type === "EffectCancelled") {
@@ -424,7 +429,7 @@ export function createEventLog<Event extends object, const Atoms extends Readonl
     append: (snapshot: Snapshot, event: JournalEvent<Event>, metadata: RecordMetadata = {}): Snapshot => {
       const record = eventOf(event, metadata.message?.inReplyTo !== undefined)
       const engine = engineOf(snapshot)
-      if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
+      if (Schema.is(CoreEvent)(record) && record.type !== "ThreadCreated" && record.type !== "StateInitialised" && record.type !== "MessageDelivered" && !isMessageReceived(record)) {
         const lifecycle = engine.effect(record.ref)
         if (record.type === "EffectCancelled") {
           if (!lifecycle) throw new Error("Cancellation requires an accepted effect")
