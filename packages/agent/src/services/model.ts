@@ -10,6 +10,9 @@ import { type ModelRef } from "@clavia/tardigrade-model/reference"
 import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libraries"
 import { type Conversation, ModelReply as ModelReplySchema } from "../contracts/events"
 import { Generate, Summarize } from "../contracts/acts"
+import { collectModelStream, type ModelCallContext } from "./model-stream"
+
+export { type ModelCallContext, type ModelDelta } from "./model-stream"
 
 export { ModelLock }
 
@@ -34,9 +37,9 @@ export type ModelReply = typeof ModelReplySchema.Type
 export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type }
 
 export class Model extends Context.Service<Model, {
-  readonly call: (input: ModelInput) => Effect.Effect<ModelReply, Error>
+  readonly call: (input: ModelInput, context?: ModelCallContext) => Effect.Effect<ModelReply, Error>
   readonly promiseTimeoutMs?: number | ((input: ModelInput) => Effect.Effect<number, Error>)
-  readonly submit?: (input: ModelInput, context: Pick<ActCancellation, "ref"> & { readonly signal: AbortSignal }) => Effect.Effect<ExecutionHandle, Error>
+  readonly submit?: (input: ModelInput, context: Pick<typeof EffectExecution.Service, "ref" | "signal" | "publish">) => Effect.Effect<ExecutionHandle, Error>
   readonly cancel?: (input: ModelInput, context: Omit<ActCancellation, "request">) => Effect.Effect<void, Error>
 }>()("example/Model") {}
 
@@ -84,7 +87,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
       return options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
     })
-    return { promiseTimeoutMs, call: input => Effect.gen(function* () {
+    return { promiseTimeoutMs, call: (input, context) => Effect.gen(function* () {
       const resolved = lock.resolve(input.model)
       const settings = yield* (selection.settings?.(resolved.model) ?? Effect.succeed(fallback))
       const timeoutMs = options.timeoutMs ?? settings.policy.timeout.attemptMs ?? DEFAULT_MODEL_TIMEOUT_MS
@@ -98,7 +101,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         }))),
         catch: RuntimeError.from,
       })
-      const response = yield* languageModel.generateText({
+      const request = {
         prompt: Prompt.fromMessages([
           Prompt.makeMessage("system", { content: input.system }),
           ...input.context.flatMap((message): readonly Prompt.Message[] => {
@@ -115,13 +118,17 @@ export function modelServices(options: ModelServiceOptions = {}) {
           }),
         ]),
         toolkit,
-        toolChoice: input.tools.length ? "auto" : "none",
-        disableToolCallResolution: true,
-      }).pipe(
+        toolChoice: input.tools.length ? "auto" as const : "none" as const,
+        disableToolCallResolution: true as const,
+      }
+      const collected = yield* (context
+        ? collectModelStream(languageModel.streamText(request), resolved.model, context, settings.policy.timeout)
+        : languageModel.generateText(request).pipe(Effect.map(response => ({ response, continuation: Prompt.fromResponseParts(response.content) })))).pipe(
         Effect.provideService(CurrentModel, resolved.model),
         Effect.timeout(timeoutMs),
         Effect.mapError(error => AiError.isAiError(error) ? modelError(error) : RuntimeError.from(error)),
       )
+      const { response } = collected
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
       const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
       const finish = response.content.find(part => part.type === "finish")
@@ -129,7 +136,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
       const reasoning = response.reasoningText
       const continuation = response.reasoning.length === 0 ? undefined : {
         provider: settings.provider, protocol: settings.protocol, model: resolved.model.model_id,
-        payload: yield* Schema.encodeEffect(Prompt.Prompt)(Prompt.fromResponseParts(response.content)).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
+        payload: yield* Schema.encodeEffect(Prompt.Prompt)(collected.continuation).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
       }
       return { text: response.text, toolCalls,
         ...(reasoning === undefined ? {} : { reasoning }),
@@ -144,7 +151,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
 }
 
 // liveModelServices connects the agent to Tardie's locked provider configuration and credentials.
-export function liveModelServices(options: ModelBindingOptions & ModelServiceOptions) {
+export function liveModelServices(options: Omit<ModelBindingOptions, "observer"> & ModelServiceOptions) {
   const { timeoutMs, ...binding } = options
   return modelServices(timeoutMs === undefined ? {} : { timeoutMs }).pipe(Layer.provideMerge(modelLayer(binding)))
 }
@@ -155,14 +162,18 @@ export const generate = Generate.layer(input => Effect.gen(function* () {
   const timeoutMs = typeof model.promiseTimeoutMs === "function" ? yield* model.promiseTimeoutMs(input) : model.promiseTimeoutMs
   if (model.submit) return Generate.defer(yield* execution.submit(model.submit(input, execution), { timeoutMs }))
   const reply = durablePromise(execution.ref, { success: ModelReplySchema, error: Schema.String })
-  const handle = yield* execution.fork(model.call(input).pipe(
+  const handle = yield* execution.fork(model.call(input, { publish: execution.publish, purpose: "inference" }).pipe(
     Effect.exit,
     Effect.map(exit => Exit.isSuccess(exit) ? reply.succeed(exit.value) : reply.fail(Cause.pretty(exit.cause))),
   ), { timeoutMs })
   return Generate.defer(handle)
 }).pipe(Effect.mapError(String)), { cancel: (input, context) => Model.use(model => model.cancel?.(input, context) ?? Effect.void) })
 
-export const summarize = Summarize.layer(input => Model.use(model => model.call(input)).pipe(
+export const summarize = Summarize.layer(input => Effect.gen(function* () {
+  const execution = yield* EffectExecution
+  const model = yield* Model
+  return yield* model.call(input, { publish: execution.publish, purpose: "compaction" })
+}).pipe(
   Effect.flatMap(reply => reply.text.trim() ? Effect.succeed(reply) : Effect.fail("Compaction returned an empty summary")),
   Effect.mapError(String),
 ))

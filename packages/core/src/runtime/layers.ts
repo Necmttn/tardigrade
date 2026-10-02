@@ -11,6 +11,7 @@ import { createActorExecution, type ActorExecutionOptions, type ActorStorage } f
 import { createActorStore } from "./execution"
 import { Supervisor, createSupervisor, type ThreadRequest } from "../services/supervisor"
 import { Invocation, createInvocation, DEFAULT_EXTERNAL_SENDER, type MessageTransport, type ActorMessageTransport } from "../services/invocation"
+import { createExecutionStream } from "../services/execution-stream"
 
 export interface ThreadStorage<Event extends object> extends ActorStorage<Event> {
   readonly supervisor: (actor: string, instance: string) => Journal<SupervisorEvent>
@@ -21,7 +22,7 @@ export const HOST_CHILD_PLACEMENTS = ["colocated"] as const satisfies readonly C
 export const DEFAULT_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 // createThreadHost composes supervision and invocation within a shared storage lifetime.
-export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery"> & {
+export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery" | "executionStreamBus"> & {
   readonly storage: ThreadStorage<Event>
   readonly from?: MessageSender
   readonly actorTransport?: ActorMessageTransport
@@ -31,6 +32,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
   readonly defaultChildPlacement?: ChildPlacement
 }) {
   const scope = Scope.makeUnsafe()
+  const executionStream = Effect.runSync(createExecutionStream(options.executionStream))
   let closed = false
   const check = Effect.suspend(() => closed ? Effect.fail(new RuntimeError("Thread host is closed")) : Effect.void)
   const run = <Value>(work: Effect.Effect<Value, Error>) => check.pipe(Effect.andThen(Effect.acquireUseRelease(work.pipe(Effect.forkIn(scope)), Fiber.join, Fiber.interrupt)))
@@ -52,7 +54,7 @@ export function createThreadHost<Event extends object, Services, State, Contract
   })
   const services: ActorExecutionOptions<Event, Services, State, Contracts>["services"] = (coordinate, runtime) => options.services(coordinate, runtime).pipe(Layer.provideMerge(Layer.merge(Layer.succeed(Supervisor, supervisor), Layer.succeed(Invocation, invocation.forSender(coordinate)))))
   const actors: ReturnType<typeof createActorExecution<Event, Services, State, Contracts>> = createActorExecution({
-    ...options, run, from: options.from ?? DEFAULT_EXTERNAL_SENDER,
+    ...options, executionStreamBus: executionStream, run, from: options.from ?? DEFAULT_EXTERNAL_SENDER,
     delivery: coordinate => ({ ...options.delivery, address: coordinate, send: invocation.forSender(coordinate).send }),
     services,
   })
@@ -62,11 +64,12 @@ export function createThreadHost<Event extends object, Services, State, Contract
     yield* Scope.close(scope, Exit.succeed(undefined))
     const supervisorResult = yield* Effect.exit(supervisor.close)
     const actorResult = yield* Effect.exit(actors.close)
-    yield* options.storage.close
+    yield* options.storage.close.pipe(Effect.ensuring(executionStream.close))
     const failure = [supervisorResult, actorResult].find(Exit.isFailure)
     if (failure && Exit.isFailure(failure)) return yield* Effect.failCause(failure.cause)
   }).pipe(Effect.uninterruptible)))
   return {
+    execution: { stream: executionStream.stream, policy: executionStream.policy },
     actor: options.actor.actorName,
     recover: (target: WatchdogTarget) => run(Effect.gen(function* () {
       if (target.actor !== options.actor.actorName) return yield* Effect.fail(new RuntimeError("Watchdog target belongs to another actor"))

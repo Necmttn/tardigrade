@@ -1,4 +1,5 @@
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
+export { executionStreamSse } from "../shared/execution-stream-sse"
 import { RuntimeError, type ActorMethods, createThreadHost, type ThreadStorage, RemoteBackup } from "@clavia/tardigrade-core"
 import { bunSupervisorPath, bunThreadPath } from "./observe"
 export { observeBunThread, observeBunSupervisor, bunThreadActivity } from "./observe"
