@@ -16,6 +16,7 @@ import type { InitialState, StatefulAtom } from "../initialise"
 import { prepareInitialState } from "./initialisation"
 import { createActorStore, type DeliveryOptions } from "./execution"
 import { createThreadStore } from "./stores/thread"
+import type { ExecutionStream, ExecutionStreamPolicy } from "../services/execution-stream"
 import { initializeThread, readThreadCreation, type ThreadJournal } from "../services/journal/thread"
 
 // localActors retains child results for its scope; handles from another scope reject instead of restarting work.
@@ -93,6 +94,7 @@ export function localActors(options: {
 }
 
 export interface ManagedThread<State, Contracts extends ActorMethods<object>> {
+  readonly execution: Pick<typeof ExecutionStream.Service, "stream" | "policy">
   readonly contracts: Contracts
   readonly get: <Value>(node: Atom<Value>) => Value
   readonly sub: <Value>(node: Atom<Value>, listener: () => void) => () => void
@@ -110,6 +112,8 @@ export interface ActorStorage<Event extends object> {
 }
 
 export interface ActorExecutionOptions<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>> {
+  readonly executionStream?: Partial<ExecutionStreamPolicy>
+  readonly executionStreamBus?: typeof ExecutionStream.Service
   readonly promises?: Partial<PromisePolicy>
   readonly canDrive?: (target: WatchdogTarget) => Effect.Effect<boolean, Error>
   // initialStateAtoms supplies destination codecs for state accepted during thread creation.
@@ -176,7 +180,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     if (!pending) {
       const journal = journalFor(coordinate)
       pending = yield* Effect.cached(readThreadCreation(journal, coordinate).pipe(Effect.andThen(createActorStore<Event, State, Services, Contracts>({
-        actor: options.actor, actorContext: options.actorContext, journal, ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
+        actor: options.actor, actorContext: options.actorContext, journal, ...(options.executionStream ? { executionStream: options.executionStream } : {}), ...(options.executionStreamBus ? { executionStreamBus: options.executionStreamBus } : {}), ...(options.canDrive ? { canDrive: options.canDrive(coordinate) } : {}), ...(options.promises ? { promises: options.promises } : {}), delivery: options.delivery(coordinate), services: runtime => options.services(coordinate, runtime),
       })), Effect.onError(() => Effect.sync(() => { threads.delete(key) }))))
       threads.set(key, pending)
     }
@@ -231,7 +235,7 @@ export function createActorExecution<Event extends object, Services, State, Cont
     }))
     type Client = { readonly [Name in keyof Contracts]: (input: MethodInput<Contracts[Name]>, request: { readonly id: string }) => Effect.Effect<MethodOutput<Contracts[Name]>, Error> }
     const methods = Object.fromEntries(Object.keys(thread.contracts).map(name => [name, (input: Schema.Json, request: { readonly id: string }) => invoke(name, input, request).pipe(Effect.andThen(result(name, request.id)), Effect.flatMap(result => result.status === "completed" ? Effect.succeed(result.output) : Effect.fail(result.status === "failed" ? new MethodFailed(result.error) : new MethodCancelled(result.reason))))])) as Client
-    return { ...methods, coordinate: Object.freeze({ ...coordinate }), store: createThreadStore(coordinate, source), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
+    return { ...methods, coordinate: Object.freeze({ ...coordinate }), execution: thread.execution, store: createThreadStore(coordinate, source), contracts: thread.contracts, methods, invoke, result, cancel, methodState,
       records: () => options.run(journal.read),
       get: source.get, getState: () => current(coordinate).getState(), resume: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.resume))), wait: options.run(open(coordinate).pipe(Effect.flatMap(thread => thread.wait))),
       receipt: (id: string) => options.run(journal.readMessage(id).pipe(Effect.tap(record => record ? journal.acknowledge : Effect.void), Effect.map(record => record ? { id, position: record.position } : undefined))),

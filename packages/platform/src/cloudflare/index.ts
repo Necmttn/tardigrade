@@ -1,4 +1,5 @@
 export { methodHttp, DEFAULT_METHOD_HTTP_INSTANCE, type MethodHttpOptions } from "../shared/method-http"
+export { executionStreamSse } from "../shared/execution-stream-sse"
 import { Effect, Exit, Fiber } from "effect"
 import { createWatchdog, RuntimeError, watchdogKey, type WatchdogPolicy, type WatchdogTarget, type ActorMethods, createThreadHost, type ThreadStorage } from "@clavia/tardigrade-core"
 import { makeRetryingAlarms, type CloudflareAlarmOptions } from "@clavia/tardigrade-cloudflare/retry"

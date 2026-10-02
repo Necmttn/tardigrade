@@ -1,4 +1,7 @@
-import { Cause, Effect, Exit, Schema } from "effect"
+import { Cause, Effect, Exit, Schema, type Stream } from "effect"
+import type { ExecutionStreamPolicy, ExecutionUpdate } from "@clavia/tardigrade-core"
+import { HttpServerResponse } from "effect/unstable/http"
+import { executionStreamSse } from "./execution-stream-sse"
 import { InitialState, InvalidMessage, MessageConflict, type ActorMethods, type MethodInput, type MethodResult, type MessageReceipt, type ThreadCoordinate, type ThreadRequest, type Recorded } from "@clavia/tardigrade-core"
 import { jsonSchemaOf } from "@clavia/tardigrade-core/json-schema"
 
@@ -19,6 +22,7 @@ interface MethodHttpThread<Contracts extends ActorMethods<object>> {
 }
 
 interface MethodHttpHost<Contracts extends ActorMethods<object>> {
+  readonly execution?: { readonly stream: Stream.Stream<ExecutionUpdate>; readonly policy: ExecutionStreamPolicy }
   readonly actor: string
   readonly methodContracts: (input: { readonly instance: string }) => Effect.Effect<Contracts, Error>
   readonly getThread: (input: { readonly instance: string; readonly thread: string }) => Effect.Effect<MethodHttpThread<Contracts> | undefined, Error>
@@ -26,7 +30,7 @@ interface MethodHttpHost<Contracts extends ActorMethods<object>> {
   readonly allocateChildThread: (input: Omit<ThreadRequest, "instance" | "parent"> & { readonly parent: ThreadCoordinate }) => Effect.Effect<{ readonly coordinate: ThreadCoordinate }, Error>
 }
 
-// methodHttp exposes typed invocation, cancellation, and log inspection for a thread host (apps/cli/src/init-flow.test.ts).
+// methodHttp exposes typed invocation, cancellation, log inspection, and live execution updates for a thread host (apps/cli/src/init-flow.test.ts, packages/platform/test/bun/execution-stream.test.ts).
 export function methodHttp<Contracts extends ActorMethods<object>>(
   host: MethodHttpHost<Contracts>,
   options: MethodHttpOptions = {},
@@ -68,6 +72,9 @@ export function methodHttp<Contracts extends ActorMethods<object>>(
       const thread = await run(host.getThread({ instance, thread: name }))
       if (!thread) return json({ error: "Unknown thread" }, 404)
       const path = match[3] ?? ""
+      if (request.method === "GET" && path === "execution/stream" && host.execution) {
+        return HttpServerResponse.toWeb(executionStreamSse(host.execution.stream, thread.coordinate))
+      }
       if (request.method === "GET" && path === "events") {
         const after = Number(url.searchParams.get("after") ?? 0)
         if (!Number.isSafeInteger(after) || after < 0) return json({ error: "after must be a nonnegative integer" }, 400)

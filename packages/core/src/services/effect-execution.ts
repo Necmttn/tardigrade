@@ -1,6 +1,7 @@
 import { Context, Effect, type Schema } from "effect"
 import type { Getter, Atom } from "../atoms/atom"
 import type { FiberHandle, ExecutionHandle, EffectRef } from "../runtime/effects"
+import type { ExecutionUpdatePayload } from "./execution-stream"
 
 export interface PromiseOptions { readonly timeoutMs?: number | undefined }
 
@@ -8,6 +9,7 @@ export interface PromiseOptions { readonly timeoutMs?: number | undefined }
 export class EffectExecution extends Context.Service<EffectExecution, {
   readonly ref: EffectRef
   readonly signal: AbortSignal
+  readonly publish: (payload: ExecutionUpdatePayload) => Effect.Effect<void>
   readonly cancel: (ref: EffectRef, reason: Schema.Json) => Effect.Effect<void, Error>
   // submit retains an accepted handle before interruption can discard it (quint/cancellation.qnt, submit).
   readonly submit: <Services>(work: Effect.Effect<ExecutionHandle, Error, Services>, options?: PromiseOptions) => Effect.Effect<ExecutionHandle, Error, Services>

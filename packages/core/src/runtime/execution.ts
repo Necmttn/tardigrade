@@ -5,6 +5,7 @@ import { createRecordSource } from "./event-source"
 import { atom, type Atom } from "../atoms/atom"
 import { EventLog } from "../services/event-log"
 import { EffectExecution } from "../services/effect-execution"
+import { createExecutionStream, type ExecutionStream, type ExecutionStreamPolicy } from "../services/execution-stream"
 import { EffectRequested, EffectSettled, PromiseSettled, hasCoreEventType } from "./events"
 import { cancelAct, type ActCancellation } from "../atoms/act"
 import type { RuntimeEvent, JournalEvent, Journal, MessageJournal, RecordMetadata } from "../services/journal"
@@ -15,7 +16,7 @@ import type { ThreadCoordinate } from "../actor/thread"
 import { MethodInvocation, MethodCancellation, type ActorMethods } from "../actor/method"
 import { createEventLog, type EffectCheckpoint } from "./replay"
 import { isDeepStrictEqual } from "node:util"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule, Clock } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Option, Queue, Schedule, Clock, Random } from "effect"
 import { WatchdogTerminalError, type RecoveryState } from "../services/watchdog"
 import { Promises, DEFAULT_PROMISE_POLICY, promiseDeadline, promisePolicy, type PromisePolicy } from "../services/promises"
 import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
@@ -46,6 +47,8 @@ export type ActorServices<Definition> = Definition extends ActorDefinition<infer
 
 // createActorStore instantiates an actor definition and owns its services, journal commits, and execution lifetime.
 export function createActorStore<Event extends object, State, Services, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: {
+  readonly executionStream?: Partial<ExecutionStreamPolicy>
+  readonly executionStreamBus?: typeof ExecutionStream.Service
   // inspect validates setup without executing proposals or recovery hooks (packages/platform/test/bun/method-http.test.ts).
   readonly inspect?: boolean
   readonly canDrive?: Effect.Effect<boolean, Error>
@@ -80,6 +83,8 @@ export function createActorStore<Event extends object, State, Services, Contract
 
 // createRuntime builds services and an atom graph within an isolated actor lifetime.
 function createRuntime<Event extends object, const Atoms extends Readonly<Record<string, Atom<unknown>>>, Services, Contracts extends ActorMethods<Event>>(options: {
+  readonly executionStream?: Partial<ExecutionStreamPolicy>
+  readonly executionStreamBus?: typeof ExecutionStream.Service
   readonly inspect?: boolean
   readonly canDrive?: Effect.Effect<boolean, Error>
   readonly setup: Effect.Effect<ActorSetup<Event, Atoms, Contracts>, Error, Services>
@@ -137,6 +142,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     const committed: Effect.Effect<void, Error>[] = []
     const ready = Deferred.makeUnsafe<void>()
     const scope = yield* Scope.make()
+    const executionStream = options.executionStreamBus ?? (yield* createExecutionStream(options.executionStream))
     const lifetimes = new Map<string, { readonly scope: Scope.Closeable; readonly signal: AbortSignal }>()
     const executions = new Map<string, Fiber.Fiber<{ readonly status: "fulfilled"; readonly value: ExecutionResult } | { readonly status: "rejected"; readonly reason: Schema.Json }, never>>()
     const cleaning = new Set<string>()
@@ -406,9 +412,14 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           dispatched.delete(key)
           continue
         }
+        const attemptId = (yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, Random.nextInt])).join(":")
+        let executionSequence = 0
         const execution: typeof EffectExecution.Service = {
           ref: work.ref,
           signal: signal,
+          publish: payload => Effect.suspend(() => closed || signal.aborted || snapshot.effect(work.ref)?.cancellation
+            ? Effect.void
+            : executionStream.publish({ ...(options.delivery ? { address: options.delivery.address } : {}), ref: work.ref, attemptId, sequence: executionSequence++, payload })),
           cancel: runtime.cancel,
           submit: (operation, options) => Effect.gen(function* () {
             if (signal.aborted) return yield* Effect.interrupt
@@ -500,6 +511,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
     })
 
     const runtime: ActorRuntime<Event> = {
+      execution: executionStream.stream,
       promisePolicy: resolutionPolicy,
       ready: Deferred.await(ready),
       onReady: recover => Effect.sync(() => {
@@ -543,6 +555,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* Queue.shutdown(admissions)
         yield* Queue.shutdown(processing)
         yield* Queue.shutdown(notifications)
+        if (!options.executionStreamBus) yield* executionStream.close
         definition?.dispose()
         store.dispose()
       })))
@@ -585,6 +598,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         yield* schedule
       }
       const api = {
+        execution: { stream: executionStream.stream, policy: executionStream.policy },
         get: store.get,
         sub: <Value>(node: Atom<Value>, listener: () => void) => {
           if (closed) throw new RuntimeError("Actor store is closed")
