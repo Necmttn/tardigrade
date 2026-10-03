@@ -733,7 +733,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
         <div className="nav-brand-group">
           <div className="nav-brand">
             <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
-            <span className="brand-version" title="Upcoming release" aria-label="Version 0.39.0, upcoming release">v0.39.0</span>
+            <span className="brand-version" title="Current release" aria-label="Version 0.41.0">v0.41.0</span>
           </div>
           <Link className="guide-link" to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
         </div>
