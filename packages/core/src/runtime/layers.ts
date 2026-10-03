@@ -25,7 +25,7 @@ export const DEFAULT_CHILD_PLACEMENT: ChildPlacement = "colocated"
 export function createThreadHost<Event extends object, Services, State, Contracts extends ActorMethods<Event> = ActorMethods<Event>>(options: Omit<ActorExecutionOptions<Event, Services, State, Contracts>, "from" | "delivery" | "executionStreamBus"> & {
   readonly storage: ThreadStorage<Event>
   // telemetry supplies Effect observability services to host-managed fibers and their child runtimes.
-  readonly telemetry?: Layer.Layer<any, never, never>
+  readonly telemetry?: Layer.Layer<unknown, never, never>
   readonly from?: MessageSender
   readonly actorTransport?: ActorMessageTransport
   readonly transports?: Readonly<Record<string, MessageTransport>>
