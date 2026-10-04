@@ -37,8 +37,6 @@ import { agentMethods, messages, infer } from "tardie/agent"
 import { defineLibrary } from "tardie/libraries"
 ```
 
-`durableAtom` validates every changed state. `validation` defaults to `DEFAULT_DURABLE_VALIDATION` (`"incremental"`): schemas must be pure, reducers preserve unchanged references, and published plain data is frozen, including shared event payloads. Use `validation: "full"` for schemas whose checks depend on mutable context or identity. Initial state and restored checkpoints always receive full validation.
-
 [State initialisation](/docs/migration/state-initialisation) shows how to create a thread from an existing actor's state.
 
 ## Thread methods
