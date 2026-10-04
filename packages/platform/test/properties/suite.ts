@@ -1,3 +1,4 @@
+import { stateValidation } from "./runtime/state-validation"
 import { snapshotLookups } from "./runtime/snapshot-lookups"
 import { checkpointChunks } from "./runtime/checkpoint-chunks"
 import { referenceCoordinates } from "./runtime/reference-coordinates"
@@ -17,6 +18,7 @@ import { toolDeferredLifecycle } from "./tool-deferred-lifecycle"
 import { agentTurnCancellation, agentCancellationRecovery, codeModeCancellationRecovery, compactionCancellationRecovery } from "./agent-cancellation"
 
 export const propertyCases = {
+  stateValidation,
   snapshotLookups: () => fc.assert(snapshotLookups, RUNTIME_PROPERTY_OPTIONS),
   checkpointChunks: () => fc.assert(checkpointChunks, RUNTIME_PROPERTY_OPTIONS),
   referenceCoordinates: () => fc.assert(referenceCoordinates, RUNTIME_PROPERTY_OPTIONS),
