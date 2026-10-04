@@ -15,19 +15,23 @@
 
 Tardigrade is a typescript framework for building composable agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and takes a functional approach to managing agent state and effects, drawing inspiration from [Elm](https://elm-lang.org/), and [Jotai](https://jotai.org/).
 
-If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
-
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/event-log-equation-dark.svg"><img src="assets/event-log-equation.svg" alt="{ view, effects } = f(event log)" width="240" height="34"></picture></p>
 
 ## Quickstart
 
+If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
+
 ```sh
-bun add tardie
+bunx tardie init meeseeks --template quickstart
 ```
 
 For coding agents, use the [Tardigrade skill](https://github.com/clavia-labs/tardigrade/blob/main/skills/tardigrade/SKILL.md).
 
 ### Atoms hold state
+
+```sh
+bun add tardie
+```
 
 Use atoms to store values for other atoms to use.
 
@@ -123,7 +127,7 @@ event log -> history -> messages -> compact --+
 
 ## Hosting
 
-Host each actor instance in a SQLite-backed Durable Object on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
+Host each actor instance with an ActorDO for its supervisor directory and a separate SQLite-backed ThreadDO for each thread on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
 
 ```ts
 import { actorContext } from "tardie/agent"
@@ -137,12 +141,23 @@ const worker = createActorWorker({
   services: () => services(),
 })
 export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
 export default worker
 ```
 
-The [Quickstart](docs/getting-started/quickstart.mdx) generates the services and deployment configs. Set your model and provider credentials before running.
+`createActorWorker` routes requests and provides the ActorDO and ThreadDO classes.
 
-`createActorWorker` owns the outer Worker routing and creates an `ActorObject` with the Durable Object storage, HTTP, alarm, and disposal lifecycle. Use `createActorHost` when you need to assemble that lifecycle yourself.
+ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state and journal. Each thread records its parent, through which we derive the logical lineage, here A -> B -> C.
+
+```text
+ActorWorker -> ActorDO [supervisor DB]
+               └── directory
+                   ├── A [ThreadDO, thread DB]
+                   ├── B [ThreadDO, thread DB, parent: A]
+                   └── C [ThreadDO, thread DB, parent: B]
+```
+
+The [Quickstart](docs/getting-started/quickstart.mdx) generates services and deployment configs with both DO bindings. Configure your model and credentials, then run or deploy.
 
 Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
 
