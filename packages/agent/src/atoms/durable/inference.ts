@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { durableAtom, CoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
+import { durableAtom, ObservedCoreEvent, RuntimeError, EffectRef, InvocationRef, effectKey, ExecutionResult, DeliverMessage } from "@clavia/tardigrade-core"
 import { TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, type Event } from "../../contracts/events"
 
 const Turn = Schema.Struct({
@@ -10,18 +10,18 @@ const Turn = Schema.Struct({
 })
 export const InferenceState = Schema.Struct({
   turns: Schema.Array(Turn),
-  turnId: Schema.String, callId: Schema.String, needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
+  turnId: Schema.String, callId: Schema.String, origin: Schema.NullOr(Schema.Finite), needsReply: Schema.Boolean, running: Schema.Boolean, waiting: Schema.Boolean,
 })
-export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", needsReply: false, running: false, waiting: false }
+export const initialInference: typeof InferenceState.Type = { turns: [], turnId: "", callId: "model::0", origin: null, needsReply: false, running: false, waiting: false }
 
-export function inferState(state: typeof InferenceState.Type, event: Event | CoreEvent): typeof InferenceState.Type {
+export function inferState(state: typeof InferenceState.Type, event: Event | ObservedCoreEvent, _metadata?: unknown, position?: number): typeof InferenceState.Type {
   let turns = state.turns
   if (event.type === "TurnRequested") {
     if (turns.some(turn => turn.turnId === event.turnId)) throw new RuntimeError(`Duplicate turn: ${event.turnId}`)
     turns = [...turns, { turnId: event.turnId, invocationRef: event.invocationRef ?? null, settlement: null, answer: null, answerCallId: null, calls: [], outstanding: [], effects: [], failure: null, cancellation: null }]
   }
   if (event.type === "AbortRequested") turns = turns.map(turn => turn.invocationRef?.method === event.ref.method && turn.invocationRef.id === event.ref.id && turn.settlement === null && turn.cancellation === null ? { ...turn, cancellation: event.reason } : turn)
-  if (event.type === "EffectRequested" && event.request.executor !== DeliverMessage.name) turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
+  if (event.type === "EffectRequested" && event.act !== DeliverMessage.name) turns = turns.map(turn => turn.turnId === state.turnId ? { ...turn, effects: [...turn.effects, { ref: event.ref, pending: true }] } : turn)
   if (event.type === "EffectCancelled" || event.type === "PromiseSettled" || (event.type === "EffectSettled" && (event.outcome.status === "rejected" || Schema.decodeUnknownSync(ExecutionResult)(event.outcome.value).type === "value"))) {
     const key = effectKey(event.ref)
     turns = turns.map(turn => turn.effects.some(work => work.pending && effectKey(work.ref) === key) ? { ...turn, effects: turn.effects.map(work => effectKey(work.ref) === key ? { ...work, pending: false } : work) } : turn)
@@ -65,7 +65,8 @@ export function inferState(state: typeof InferenceState.Type, event: Event | Cor
   const turn = turns.find(turn => turn.settlement === null)
   const running = turn?.calls.find(call => !call.returned)
   const turnId = turn?.turnId ?? ""
-  return { turns, turnId, callId: running?.callId ?? `model:${turnId}:${turn?.calls.length ?? 0}`, needsReply: turn !== undefined && turn.answer === null, running: running !== undefined, waiting: (turn?.outstanding.length ?? 0) > 0 }
+  const callId = running?.callId ?? `model:${turnId}:${turn?.calls.length ?? 0}`
+  return { turns, turnId, callId, origin: callId === state.callId ? state.origin : position ?? null, needsReply: turn !== undefined && turn.answer === null, running: running !== undefined, waiting: (turn?.outstanding.length ?? 0) > 0 }
 }
 
 // turnOutput reads the answer of a completed turn.
@@ -83,7 +84,7 @@ export function turnOutput(events: readonly Event[], settlement: TurnSettled): s
 
 export const inferenceState = durableAtom({
   name: "agent.inference.state",
-  input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, CoreEvent]),
+  input: Schema.Union([TurnRequested, ModelCalled, ModelFailed, ModelReturned, ToolReturned, TurnSettled, AbortRequested, ObservedCoreEvent]),
   schema: InferenceState,
   initial: initialInference,
   reduce: inferState,

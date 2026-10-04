@@ -20,6 +20,7 @@ import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope, Cause, Schema, Op
 import { WatchdogTerminalError, type RecoveryState } from "../services/watchdog"
 import { Promises, DEFAULT_PROMISE_POLICY, promiseDeadline, promisePolicy, type PromisePolicy } from "../services/promises"
 import { DEFAULT_CHECKPOINT_MAX_BYTES, checkpointDigest, decodeCheckpoint, encodeCheckpoint } from "../services/checkpoint"
+import { observeRequest, storeRequest, DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES } from "./input-digest"
 import { messageReplies } from "./messages"
 import { DeliverMessage, type MessageDelivery } from "../services/invocation"
 import { select } from "./stores/thread"
@@ -57,6 +58,7 @@ export function createActorStore<Event extends object, State, Services, Contract
   // actorContext selects setup capabilities explicitly; the execution context is supplied only to effect execution.
   readonly actorContext: (services: Context.Context<Requirements<{ root: Atom<NoInfer<State>> }> | Exclude<NoInfer<Services>, Scope.Scope>>) => Context.Context<Exclude<NoInfer<Services>, Scope.Scope>>
   readonly events?: readonly RuntimeEvent<Event>[]
+  readonly effectInput?: { readonly digestMinBytes?: number }
   readonly checkpoint?: CheckpointPolicy
   readonly cancellation?: { readonly retryIntervalMs?: number }
   readonly promiseDelivery?: { readonly retryIntervalMs?: number }
@@ -91,6 +93,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
   readonly services: (runtime: ActorRuntime<Event>) => Layer.Layer<Requirements<Atoms> | Exclude<Services, Scope.Scope>, Error>
   readonly actorContext: (services: Context.Context<Requirements<Atoms> | Exclude<Services, Scope.Scope>>) => Context.Context<Exclude<Services, Scope.Scope>>
   readonly events?: readonly RuntimeEvent<Event>[]
+  readonly effectInput?: { readonly digestMinBytes?: number }
   readonly checkpoint?: CheckpointPolicy
   readonly cancellation?: { readonly retryIntervalMs?: number }
   readonly promiseDelivery?: { readonly retryIntervalMs?: number }
@@ -101,6 +104,8 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
 }) {
   return Effect.gen(function* () {
     if (options.journal && options.events !== undefined) return yield* Effect.fail(new RuntimeError("Supply either a journal or initial events"))
+    const digestMinBytes = options.effectInput?.digestMinBytes ?? DEFAULT_EFFECT_INPUT_DIGEST_MIN_BYTES
+    if (!Number.isSafeInteger(digestMinBytes) || digestMinBytes < 0) return yield* Effect.fail(new RuntimeError("Effect input digest minBytes must be a nonnegative safe integer"))
     const resolutionPolicy = yield* Effect.try({ try: () => promisePolicy(options.promises), catch: RuntimeError.from })
     const deliveryRetryIntervalMs = options.promiseDelivery?.retryIntervalMs ?? DEFAULT_PROMISE_POLICY.retryIntervalMs
     if (!Number.isSafeInteger(deliveryRetryIntervalMs) || deliveryRetryIntervalMs < 1) return yield* Effect.fail(new RuntimeError("Promise delivery retryIntervalMs must be a positive safe integer"))
@@ -124,12 +129,15 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       return payload
     }
     const store = createStore(Context.make(EventLog, {
-      events: source.events,
-      records: source.records,
+      events: source.observedEvents,
+      records: source.observedRecords,
       bindings,
       position: () => checkpointSeed?.position ?? 0,
       initialState: () => initialState ??= initialStateSeed(store.get(source.records), checkpointSeed),
-      effect: ref => snapshot?.effect(ref),
+      effect: ref => {
+        const state = snapshot?.effect(ref)
+        return state ? { ...state, request: Object.freeze(observeRequest(state.request)) } : undefined
+      },
       promise: ref => snapshot?.promise(ref),
     }))
     const sync = () => {
@@ -221,8 +229,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
         const lifecycle = next.effect(record.ref)
         const cancellation = lifecycle?.cancellation
         if (!cancellation) continue
-        const result = lifecycle.settlement?.outcome.status === "fulfilled" ? yield* Schema.decodeUnknownEffect(ExecutionResult)(lifecycle.settlement.outcome.value).pipe(Effect.mapError(RuntimeError.from)) : undefined
-        queueCleanup({ request: lifecycle.request.request, ref: record.ref, reason: cancellation.reason, ...(result?.type === "promise" ? { handle: result.handle } : {}) })
+        const cleanup = next.cancelled().find(work => effectKey(work.ref) === effectKey(record.ref))
+        if (!cleanup) return yield* Effect.fail(new RuntimeError("Cancellation requires reconstructed input"))
+        queueCleanup(cleanup)
         const key = effectKey(cancellation.ref)
         const timer = deadlineTimers.get(key)
         if (timer) yield* Fiber.interrupt(timer).pipe(Effect.forkIn(scope))
@@ -396,9 +405,9 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
           }
           const work = yield* Effect.try({ try: () => snapshot.effects().find(work => !work.ref || !dispatched.has(effectKey(work.ref))), catch: RuntimeError.from })
           if (!work) return
-          const ref = work.ref ?? { seq: snapshot.position, atom: work.source, tag: work.id }
+          const ref = work.ref ?? { seq: snapshot.position, atom: work.atom, act: work.request.act }
           if (!work.ref) {
-            const request = yield* Schema.decodeEffect(EffectRequested)({ type: "EffectRequested", ref, request: work.request }).pipe(Effect.mapError(RuntimeError.from))
+            const request = yield* Schema.decodeEffect(EffectRequested)({ type: "EffectRequested", ref, ...(work.origin === undefined ? {} : { origin: work.origin }), request: storeRequest(work.request, digestMinBytes) }).pipe(Effect.mapError(RuntimeError.from))
             yield* appendNow(request)
           }
           const recorded = snapshot.effect(ref)?.request
@@ -587,7 +596,7 @@ function createRuntime<Event extends object, const Atoms extends Readonly<Record
       const history = options.journal
         ? checkpoint ? yield* options.journal.readAfter(checkpoint.position) : yield* options.journal.read
         : (options.events ?? []).map(event => ({ event }))
-      definition = createEventLog({ schema: setup.schema, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
+      definition = createEventLog({ schema: setup.schema, digestMinBytes, atoms: { ...setup.effects, "host.message.replies": messageReplies({ schema: setup.schema,
         methods: setup.contracts, ...(options.delivery ? { address: options.delivery.address } : {}),
       }) }, ...(checkpoint ? { checkpoint } : {}) })
       snapshot = yield* Effect.try({ try: () => definition.replay(history), catch: RuntimeError.from })
