@@ -1,5 +1,5 @@
 export * from "./atoms/atom"
-export { durableAtom, type DurableAtom } from "./atoms/durable"
+export { durableAtom, DEFAULT_DURABLE_VALIDATION, type DurableValidation, type DurableAtom } from "./atoms/durable"
 export { EventLog } from "./services/event-log"
 export * from "./atoms/store"
 export type { ActorGraph } from "./atoms/graph"
