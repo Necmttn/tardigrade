@@ -10,10 +10,6 @@ export interface DurableAtom<State, Event> extends Atom<State>, StatefulAtom {
   readonly input: Schema.Schema<Event>
 }
 
-// DEFAULT_DURABLE_VALIDATION selects reference reuse for immutable state and pure schemas.
-export const DEFAULT_DURABLE_VALIDATION = "incremental" as const
-export type DurableValidation = "incremental" | "full"
-
 /*
 const count = durableAtom({
   name: "example.count",
@@ -24,30 +20,28 @@ const count = durableAtom({
 })
 */
 
-// durableAtom folds matching input events into validated state and supplies their zero-based journal positions. Reducers must preserve unchanged references and leave state unchanged after publication; incremental validation requires pure schemas and freezes shared plain data (packages/platform/test/properties/runtime/state-validation.ts).
+// durableAtom folds matching input events into validated state and supplies their zero-based journal positions. Schemas must be pure; reducers preserve unchanged references and leave published state unchanged. Plain-data states are frozen (packages/platform/test/properties/runtime/state-validation.ts).
 export function durableAtom<State, Event>(options: {
   readonly name: string
   readonly input: Schema.Schema<Event>
   readonly schema: Schema.Schema<State>
-  readonly validation?: DurableValidation
   readonly initial: NoInfer<State>
   readonly reduce: (state: NoInfer<State>, event: NoInfer<Event>, metadata: RecordMetadata, position: number) => NoInfer<State>
 }): DurableAtom<State, Event> {
   const accepts = Schema.is(options.input)
   if (!options.name.trim()) throw new Error("Durable atom name must not be empty")
   const validate = Schema.decodeUnknownSync(Schema.toType(options.schema), { onExcessProperty: "error" })
-  const fast = (options.validation ?? DEFAULT_DURABLE_VALIDATION) === "incremental" ? incrementalValidator(options.schema) : undefined
+  const fast = incrementalValidator(options.schema)
   const check = (state: State): State => {
-    if (!fast || !fast(state)) validate(state)
+    if (!fast(state)) validate(state)
     return state
   }
-  const prepare = (state: State): State => fast ? check(state) : state
   const decode = (Schema.decodeUnknownSync as unknown as (schema: unknown, options: { readonly onExcessProperty: "error" }) => (value: unknown) => unknown)(options.schema, { onExcessProperty: "error" }) as (value: unknown) => State
   const encode = (Schema.encodeUnknownSync as unknown as (schema: unknown) => (value: unknown) => unknown)(options.schema) as (value: State) => unknown
-  const restore = (state: unknown): State => prepare(validate(decode(state)))
+  const restore = (state: unknown): State => check(validate(decode(state)))
   const initial = structuredClone(options.initial)
   validate(initial)
-  prepare(initial)
+  check(initial)
   type Frame = { readonly source: Atom<readonly unknown[]>; readonly position: number; readonly state: State }
   const reduced = NativeAtom.readable((get): Frame => {
     const context = get(eventLogContext)
@@ -65,7 +59,7 @@ export function durableAtom<State, Event>(options: {
     if (sameSource && previous.position > offset + events.length) throw new Error("EventLog source must be append-only")
     if (seed && (seed.position < offset || seed.position > offset + events.length)) throw new Error(`Atom seed position is outside the event source: ${options.name}`)
     const continued = sameSource && previous.position >= (seed?.position ?? offset)
-    let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : prepare(structuredClone(initial))
+    let state = continued ? previous.state : seed?.state.has(options.name) ? restore(seed.state.get(options.name)) : check(structuredClone(initial))
     const start = (continued ? previous.position : seed?.position ?? offset) - offset
     for (let index = Math.max(0, start); index < events.length; index++) {
       const event = events[index]

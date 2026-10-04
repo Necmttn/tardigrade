@@ -76,20 +76,16 @@ export function stateValidation() {
     throw new Error("Invalid state was accepted")
   }
   const Added = Schema.Struct({ type: Schema.Literal("Added"), count: Schema.Finite })
-  for (const validation of ["incremental", "full"] as const) {
-    const state = durableAtom({ name: "test.validation", input: Added, schema: State, validation, initial: { items: [] }, reduce: (state, event) => ({ items: [...state.items, { count: event.count, label: "ok" }] }) })
-    const log = createEventLog({ schema: Added, atoms: { root: effectAtom(get => ({ view: get(state), events: {}, acts: {} })) } })
-    try {
-      const current = log.append(log.initial, { type: "Added", count: 1 })
-      const value = current.get(state)
-      const restored = state[AtomState].decode(value)
-      if (!isDeepStrictEqual(restored, value) || Object.isFrozen(restored) !== (validation === "incremental")) throw new Error("Restored state or validation policy differs")
-      if (validation === "incremental") {
-        errorOf(() => Object.assign(value.items[0]!, { count: -1 }))
-        if (!Object.isFrozen(log.initial.get(state).items)) throw new Error("Initial state is mutable")
-      }
-      const expected = errorOf(() => Schema.decodeSync(State, STRICT)({ items: [...value.items, { count: -1, label: "ok" }] }))
-      if (errorOf(() => log.append(current, { type: "Added", count: -1 }).get(state)) !== expected) throw new Error("Invalid reduction lost Effect's error")
-    } finally { log.dispose() }
-  }
+  const state = durableAtom({ name: "test.validation", input: Added, schema: State, initial: { items: [] }, reduce: (state, event) => ({ items: [...state.items, { count: event.count, label: "ok" }] }) })
+  const log = createEventLog({ schema: Added, atoms: { root: effectAtom(get => ({ view: get(state), events: {}, acts: {} })) } })
+  try {
+    const current = log.append(log.initial, { type: "Added", count: 1 })
+    const value = current.get(state)
+    const restored = state[AtomState].decode(value)
+    if (!isDeepStrictEqual(restored, value) || !Object.isFrozen(restored)) throw new Error("Restored state differs")
+    errorOf(() => Object.assign(value.items[0]!, { count: -1 }))
+    if (!Object.isFrozen(log.initial.get(state).items)) throw new Error("Initial state is mutable")
+    const expected = errorOf(() => Schema.decodeSync(State, STRICT)({ items: [...value.items, { count: -1, label: "ok" }] }))
+    if (errorOf(() => log.append(current, { type: "Added", count: -1 }).get(state)) !== expected) throw new Error("Invalid reduction lost Effect's error")
+  } finally { log.dispose() }
 }
