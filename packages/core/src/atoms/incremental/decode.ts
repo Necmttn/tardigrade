@@ -5,6 +5,7 @@ const STRICT = { onExcessProperty: "error" } as const
 const isJson = Schema.is(Schema.Json)
 
 type Decode = (value: unknown) => { readonly value: unknown } | undefined
+type DecodeOptions = { readonly freeze?: boolean }
 
 // reusableJson holds frozen plain data that is JSON (Schema.Json) with Object.prototype objects, so reusing it equals a structuredClone of it; frozen plain data cannot change after the check.
 const reusableJson = new WeakSet<object>()
@@ -27,12 +28,17 @@ const isPlainObject = (value: object): boolean => {
 }
 
 // incrementalDecoder decodes a value against a type-side schema and returns a result deep-equal to structuredClone of Schema.decodeSync, reusing frozen plain-data subtrees instead of decoding and copying them again. It returns undefined where it cannot show that equivalence; the caller then decodes and clones.
-// With freeze, a container it builds whose children are all primitives or frozen plain data is frozen and recorded in frozenPlainData, so later proofs of the result stop at it (runtime/replay.ts freeze).
-export function incrementalDecoder(schema: Schema.Top, options?: { readonly freeze?: boolean }): Decode {
-  const built = (value: object, plain: boolean) => {
-    if (options?.freeze && plain) {
+// With freeze, a container it builds whose children are all primitives or frozen plain data is frozen, recorded in frozenPlainData so later proofs of the result stop at it (runtime/replay.ts freeze), and recorded as passed at its node, since it holds exactly that node's fields, each decoded.
+// A call without freeze rebuilds such a container unfrozen and reuses its passed children, so it returns the same shape as decoding the unfrozen original.
+export function incrementalDecoder(schema: Schema.Top): (value: unknown, options?: DecodeOptions) => ReturnType<Decode> {
+  let freeze = false
+  const frozenByFreeze = new WeakSet<object>()
+  const built = (value: object, plain: boolean, passed: WeakSet<object>) => {
+    if (freeze && plain) {
       Object.freeze(value)
       frozenPlainData.add(value)
+      frozenByFreeze.add(value)
+      passed.add(value)
     }
     return { value }
   }
@@ -55,7 +61,7 @@ export function incrementalDecoder(schema: Schema.Top, options?: { readonly free
           out.push(decoded.value)
           plain &&= isFrozenPlain(decoded.value)
         }
-        return built(out, plain)
+        return built(out, plain, passed)
       }
     } else if (ast._tag === "Objects" && !ast.checks?.length && !ast.encodingChecks?.length && ast.indexSignatures.length === 0 && ast.propertySignatures.every(property => typeof property.name === "string")) {
       const fields = ast.propertySignatures.map(property => ({ name: property.name as string, optional: property.type.context?.isOptional === true, decode: compile(property.type) }))
@@ -74,12 +80,13 @@ export function incrementalDecoder(schema: Schema.Top, options?: { readonly free
           out[field.name] = decoded.value
           plain &&= isFrozenPlain(decoded.value)
         }
-        return built(out, plain)
+        return built(out, plain, passed)
       }
     }
     return value => {
       if (typeof value !== "object" || value === null) return isJson(value) && strict(value) ? { value } : undefined
       if (frozenPlainData.has(value)) {
+        if (container && !freeze && frozenByFreeze.has(value)) return container(value)
         if (passed.has(value)) return { value }
         if (!isReusableJson(value) || !strict(value)) return undefined
         passed.add(value)
@@ -89,5 +96,13 @@ export function incrementalDecoder(schema: Schema.Top, options?: { readonly free
       return strict(value) && isJson(value) ? { value: structuredClone(value) } : undefined
     }
   }
-  return compile(SchemaAST.toType(schema.ast))
+  const decode = compile(SchemaAST.toType(schema.ast))
+  return (value, options) => {
+    freeze = options?.freeze === true
+    try {
+      return decode(value)
+    } finally {
+      freeze = false
+    }
+  }
 }
