@@ -2,16 +2,18 @@ import { modelRetry } from "./model-retry"
 import type { RetryOptions } from "@clavia/tardigrade-core/services/effect-execution"
 import { ModelInfo } from "../actor/context"
 import { RuntimeError, type ExecutionHandle, type ActCancellation, durablePromise, EffectExecution } from "@clavia/tardigrade-core"
-import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option } from "effect"
+import { Effect, Layer, Context, JsonSchema, Schema, SchemaRepresentation, Cause, Exit, Option, Stream } from "effect"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
 import { ObjectReadConcurrency, ObjectStorage, objectKeyOf } from "@clavia/tardigrade-model/object"
 import { AiError, LanguageModel, Prompt, Tool as AiTool, Toolkit } from "effect/unstable/ai"
+import { ResponseFormat } from "@tardie/ai"
 import { modelLayer, type ModelBindingOptions } from "@clavia/tardigrade-model/host"
 import { reportedCostOf } from "@clavia/tardigrade-model/providers/usage"
 import { BindingSettings, CurrentModel, ModelSelection } from "@clavia/tardigrade-model/settings"
 import { type ModelRef } from "@clavia/tardigrade-model/reference"
 import { DEFAULT_METHOD_EXECUTION, type ToolSpec } from "@clavia/tardigrade-libraries"
 import { type Conversation, MessageContentPart, ModelReply as ModelReplySchema } from "../contracts/events"
+import type { OutputContract } from "../contracts/acts"
 import { Generate, Summarize } from "../contracts/acts"
 import { collectModelStream, type ModelCallContext } from "./model-stream"
 
@@ -37,7 +39,7 @@ export const modelInfo = Layer.effect(ModelInfo, resolveModel)
 export type Tool = ToolSpec
 export type ModelReply = typeof ModelReplySchema.Type
 
-export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type }
+export interface ModelInput { readonly model: ModelRef; readonly system: string; readonly tools: readonly Tool[]; readonly context: typeof Conversation.Type; readonly output?: OutputContract }
 
 export class Model extends Context.Service<Model, {
   readonly call: (input: ModelInput, context?: ModelCallContext) => Effect.Effect<ModelReply, Error>
@@ -95,6 +97,13 @@ const resolveContentObjects = (context: typeof Conversation.Type): Effect.Effect
   return new Map(entries)
 })
 
+const jsonSchemaOf = (value: unknown) => Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(value)
+
+const outputDecode = (schema: Schema.Top, text: string) => Effect.result(Effect.try({
+  try: () => JSON.parse(text),
+  catch: RuntimeError.from,
+}).pipe(Effect.flatMap(value => (Schema.decodeUnknownEffect as unknown as (schema: Schema.Top) => (value: unknown) => Effect.Effect<unknown, Error>)(schema)(value))))
+
 const promptPartsOf = (content: ReadonlyArray<MessageContentPart>, objects: ReadonlyMap<string, Uint8Array>) => content.map((part) => {
   if (part.type === "text") return Prompt.makePart("text", { text: part.text })
   const data = objects.get(objectKeyOf(part.object))
@@ -134,6 +143,20 @@ export function modelServices(options: ModelServiceOptions = {}) {
         }))),
         catch: RuntimeError.from,
       })
+      const responseFormat = input.output === undefined ? undefined : {
+        type: "json" as const,
+        objectName: input.output.name,
+        schema: SchemaRepresentation.fromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft07(jsonSchemaOf(input.output.schema)),
+          settings.schemaImport ?? DEFAULT_SCHEMA_IMPORT_OPTIONS,
+        ),
+      }
+      if (input.output !== undefined && (settings.output?.guarantee !== "native" || (input.tools.length > 0 && !settings.output.withTools))) {
+        const reason = settings.output?.guarantee !== "native"
+          ? `model ${resolved.model.model_id} does not declare native structured-output support`
+          : `model ${resolved.model.model_id} cannot combine native structured output with tools`
+        return yield* Effect.fail(new RuntimeError(reason))
+      }
       const request = {
         prompt: Prompt.fromMessages([
           Prompt.makeMessage("system", { content: input.system }),
@@ -154,15 +177,26 @@ export function modelServices(options: ModelServiceOptions = {}) {
         toolChoice: input.tools.length ? "auto" as const : "none" as const,
         disableToolCallResolution: true as const,
       }
-      const collected = yield* (context
-        ? collectModelStream(languageModel.streamText(request), resolved.model, context, settings.policy.timeout)
-        : languageModel.generateText(request).pipe(Effect.map(response => ({ response, continuation: Prompt.fromResponseParts(response.content) })))).pipe(
+      const stream = responseFormat === undefined
+        ? languageModel.streamText(request)
+        : languageModel.streamText(request).pipe(Stream.provideService(ResponseFormat, responseFormat))
+      const generated = context
+        ? collectModelStream(stream, resolved.model, context, settings.policy.timeout)
+        : responseFormat === undefined
+          ? languageModel.generateText(request).pipe(Effect.map(response => ({ response, continuation: Prompt.fromResponseParts(response.content) })))
+          : languageModel.generateText(request).pipe(Effect.provideService(ResponseFormat, responseFormat), Effect.map(response => ({ response, continuation: Prompt.fromResponseParts(response.content) })))
+      const collected = yield* generated.pipe(
         Effect.provideService(CurrentModel, resolved.model),
         Effect.timeout(timeoutMs),
         Effect.mapError(error => AiError.isAiError(error) ? modelError(error) : RuntimeError.from(error)),
       )
       const { response } = collected
       if (response.finishReason === "length") return yield* Effect.fail(new RuntimeError(`Model reached maxOutputTokens=${settings.policy.maxOutputTokens}`))
+      let outputErrors: string[] | undefined
+      if (input.output !== undefined) {
+        const decoded = yield* outputDecode(responseFormat!.schema, response.text)
+        if (decoded._tag === "Failure") outputErrors = [decoded.failure instanceof Error ? decoded.failure.message : String(decoded.failure)]
+      }
       const toolCalls = response.toolCalls.map(call => ({ callId: call.id, name: call.name, input: Schema.decodeUnknownSync(Schema.Json)(call.params) }))
       const finish = response.content.find(part => part.type === "finish")
       const usd = finish ? reportedCostOf(finish) : undefined
@@ -171,7 +205,7 @@ export function modelServices(options: ModelServiceOptions = {}) {
         provider: settings.provider, protocol: settings.protocol, model: resolved.model.model_id,
         payload: yield* Schema.encodeEffect(Prompt.Prompt)(collected.continuation).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json))),
       }
-      return { text: response.text, toolCalls,
+      return { text: response.text, toolCalls, ...(outputErrors === undefined ? {} : { outputErrors }),
         ...(reasoning === undefined ? {} : { reasoning }),
         ...(continuation === undefined ? {} : { continuation }),
         usage: {
