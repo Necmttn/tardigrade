@@ -33,7 +33,7 @@ export const providerLayer: ProviderLayer = (options) => Layer.unwrap(Effect.try
     const loaded: { readonly providerLayer: ProviderLayer } = await import(/* @vite-ignore */ path)
     return loaded.providerLayer(options)
   } catch (cause) {
-    const packages = options.provider === "bedrock" ? "@aws-sdk/client-bedrock-runtime @smithy/fetch-http-handler @smithy/node-http-handler" : `@tardie/ai-${options.provider}`
+    const packages = options.provider === "bedrock" ? "@tardie/ai-bedrock" : `@tardie/ai-${options.provider}`
     throw new Error(`Cannot load the ${options.provider} provider; install compatible ${packages} packages. ${cause instanceof Error ? cause.message : String(cause)}`, { cause })
   }
 }).pipe(Effect.catch((error) => Effect.succeed(failedProviderLayer(error.cause)))))
