@@ -16,7 +16,8 @@
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-libraries": "workspace:*",
     "effect": "4.0.1",
-    "@clavia/tardigrade-model": "workspace:*"
+    "@clavia/tardigrade-model": "workspace:*",
+    "@tardie/ai": "0.1.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
