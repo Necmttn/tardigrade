@@ -8,7 +8,7 @@ The workspace uses upstream Effect and published provider packages from the [Eff
 | `@tardie/ai-bedrock` | `4.0.1-clavia.0` | AWS Bedrock Converse provider |
 | `@tardie/ai` | `0.1.0` | Shared deferred tool validation and response formats |
 | `@tardie/ai-openai` | `4.0.1-clavia.0` | OpenAI Responses provider |
-| `@tardie/ai-anthropic` | `4.0.1-clavia.0` | Anthropic provider |
+| `@tardie/ai-anthropic` | `4.0.1-clavia.1` | Anthropic provider |
 | `@tardie/ai-openai-compat` | `4.0.1-clavia.1` | OpenAI-compatible chat completions provider |
 | `@tardie/ai-openrouter` | `4.0.1-clavia.1` | OpenRouter provider |
 

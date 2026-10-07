@@ -292,7 +292,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@tardie/ai": "0.1.0",
-        "@tardie/ai-anthropic": "4.0.1-clavia.0",
+        "@tardie/ai-anthropic": "4.0.1-clavia.1",
         "@tardie/ai-bedrock": "4.0.1-clavia.0",
         "@tardie/ai-openai": "4.0.1-clavia.0",
         "@tardie/ai-openai-compat": "4.0.1-clavia.1",
@@ -1006,7 +1006,7 @@
 
     "@tardie/ai": ["@tardie/ai@0.1.0", "", { "peerDependencies": { "effect": "^4.0.1" } }, "sha512-9sxWk2UUN1Rg7xB/hN9c4UwARRtXncz0daGi6+VEhd6cyD5yMsobyyKuzE3jrKjsYoSIDq78IniXbuhOYXApGw=="],
 
-    "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.1-clavia.0", "", { "dependencies": { "@tardie/ai": "0.1.0" }, "peerDependencies": { "effect": "^4.0.1" } }, "sha512-gvaBJ2AzXYeiv+QjOmFxXlwLleMt3vU/ncaS4y4svVbdCwcXks5CcSv1wMBqxcO1gTTTBgWLhSNXSZlAzmbYHQ=="],
+    "@tardie/ai-anthropic": ["@tardie/ai-anthropic@4.0.1-clavia.1", "", { "dependencies": { "@tardie/ai": "0.1.0" }, "peerDependencies": { "effect": "^4.0.1" } }, "sha512-Pn/t6eyFIsAe4O1D/EP2G4fO0XNc8bUyzPIQDUVgsFzNMqtlgF9uivwIrXW3LxkC7obUeskXvqXUbpjRALg9jQ=="],
 
     "@tardie/ai-bedrock": ["@tardie/ai-bedrock@4.0.1-clavia.0", "", { "dependencies": { "@aws-sdk/client-bedrock-runtime": "^3.1079.0" }, "peerDependencies": { "effect": "^4.0.1" } }, "sha512-bsfaEnkNQvnkwfPwUg5FTkSgoKicJTiiNGTrW5D/SrU/73zwNguDunc8UckYtWotCr9oDgxIf64E7roP0XQrDw=="],
 
