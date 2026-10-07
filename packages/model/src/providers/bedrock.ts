@@ -1,6 +1,6 @@
 import { inferenceLayer as sharedInferenceLayer } from "../services"
 import { DEFAULT_BEDROCK_TOOL_HISTORY, validatedConfig } from "./options"
-import * as BedrockLanguageModel from "./bedrock-language-model"
+import * as BedrockLanguageModel from "@tardie/ai-bedrock"
 import { bedrockGatewayHandler } from "./bedrock-transport"
 import type { ProviderLayer, ProviderOptions } from "./layer"
 import type { BedrockOptions } from "./bedrock-contract"
