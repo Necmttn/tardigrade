@@ -21,6 +21,7 @@ This ledger tracks behavior carried by the `@tardie/ai*` fork packages while Tar
 | Anthropic reasoning usage | Anthropic | Not upstreamed | Port `thinking_tokens` mapping and generated declarations | Anthropic usage tests |
 | Provider configuration schemas | All providers | Not upstreamed | Decide whether to port `ConfigSchema` and `ModelConfigSchema` | Config schema tests |
 | Bedrock provider and error policy | Bedrock | Owned | Port the provider to stable imports; the published package still imports removed `effect/Encoding` | `packages/model/src/providers/bedrock.test.ts` |
+| Checkpoint digest encoding | Core checkpoint service | Stable API gap | Keep the local byte-to-hex encoder because `effect@4.0.1` exports neither `Encoding` nor `effect/Encoding` | `packages/core/src/services/checkpoint.ts` |
 
 Stable provider packages are `@tardie/ai-openai`, `@tardie/ai-anthropic`, `@tardie/ai-openai-compat`, and `@tardie/ai-openrouter`, all at `4.0.1` for this migration.
 
