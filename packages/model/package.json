@@ -48,12 +48,12 @@
     "@tardie/ai-openai-compat": "4.0.1-clavia.1",
     "@tardie/ai-openrouter": "4.0.1-clavia.1",
     "effect": "4.0.1",
-    "@tardie/ai": "0.1.0",
-    "@tardie/ai-bedrock": "4.0.1-clavia.0"
+    "@tardie/ai": "0.1.0"
   },
   "devDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2"
+    "@smithy/node-http-handler": "^4.11.2",
+    "@tardie/ai-bedrock": "4.0.1-clavia.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -61,13 +61,17 @@
   },
   "peerDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2"
+    "@smithy/node-http-handler": "^4.11.2",
+    "@tardie/ai-bedrock": "4.0.1-clavia.0"
   },
   "peerDependenciesMeta": {
     "@smithy/fetch-http-handler": {
       "optional": true
     },
     "@smithy/node-http-handler": {
+      "optional": true
+    },
+    "@tardie/ai-bedrock": {
       "optional": true
     }
   }

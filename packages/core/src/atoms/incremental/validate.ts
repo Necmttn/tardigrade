@@ -117,7 +117,7 @@ export function incrementalValidator(schema: Schema.Top, onFallback?: () => void
   }
   const ast = SchemaAST.toType(schema.ast)
   const fast = compile(ast)
-  const decode = Schema.decodeUnknownExit(Schema.toType(Schema.make(ast)), STRICT)
+  const decode = Schema.decodeUnknownExit(Schema.toType(schema), STRICT)
   let reported = false
   const parse = (value: unknown): unknown => {
     const plain = plainData(value)

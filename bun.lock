@@ -291,7 +291,6 @@
       "name": "@clavia/tardigrade-model",
       "version": "0.0.1",
       "dependencies": {
-        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
         "@tardie/ai": "0.1.0",
         "@tardie/ai-anthropic": "4.0.1-clavia.0",
         "@tardie/ai-bedrock": "4.0.1-clavia.0",

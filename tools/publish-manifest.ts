@@ -50,7 +50,6 @@ export const REQUIRED_PUBLISH_DEPENDENCIES = [
   "@cfworker/json-schema",
   "@tardie/ai",
   "@tardie/ai-anthropic",
-  "@tardie/ai-bedrock",
   "@tardie/ai-openai",
   "@tardie/ai-openai-compat",
   "@tardie/ai-openrouter",
