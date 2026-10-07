@@ -47,9 +47,10 @@ export const publishSources = [
 ] as const
 
 export const REQUIRED_PUBLISH_DEPENDENCIES = [
-  "@aws-sdk/client-bedrock-runtime",
   "@cfworker/json-schema",
+  "@tardie/ai",
   "@tardie/ai-anthropic",
+  "@tardie/ai-bedrock",
   "@tardie/ai-openai",
   "@tardie/ai-openai-compat",
   "@tardie/ai-openrouter",
