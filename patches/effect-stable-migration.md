@@ -4,16 +4,16 @@ This ledger tracks behavior carried by the `@tardie/ai*` fork packages while Tar
 
 | Patch | Package area | Status against Effect 4.0.1 | Disposition | Acceptance evidence |
 | --- | --- | --- | --- | --- |
-| Deferred tool validation | Shared AI wrapper | Not upstreamed | Port the Tardigrade wrapper and retain `ToolCallValidationError` semantics; stable rejects malformed streamed calls before deferred completion | `packages/model/src/providers/response.test.ts` |
-| Scoped response formats | Shared AI wrapper | Owned | Port `ResponseFormat` and its text versus object precedence | `packages/model/src/providers/response-format.test.ts` |
-| Output-limit completion | OpenAI, Anthropic, compatible | Needs verification | Stable handles incomplete responses, but malformed tool JSON still differs in deferred mode | `packages/model/src/providers/response.test.ts` |
+| Deferred tool validation | Shared AI wrapper | Not upstreamed | Port the Tardigrade wrapper and retain `ToolCallValidationError` semantics; stable rejects malformed streamed calls before deferred completion | `packages/ai/clavia/test/ProviderStreams.test.ts` |
+| Scoped response formats | Shared AI wrapper | Owned | Port `ResponseFormat` and its text versus object precedence | `packages/ai/clavia/test/LanguageModel.test.ts` |
+| Output-limit completion | OpenAI, Anthropic, compatible | Needs verification | Stable handles incomplete responses, but malformed tool JSON still differs in deferred mode | Provider package stream suites |
 | Raw usage metadata | OpenAI, compatible | Not upstreamed | Stable exposes normalized usage but drops the raw OpenAI finish metadata; decide whether to port the metadata patch | Provider stream fixtures |
-| Completion evidence | Compatible | Upstreamed in substance | Retain the bare-sentinel and missing-finish regression tests | `packages/model/src/providers/response.test.ts` |
+| Completion evidence | Compatible | Upstreamed in substance | Retain the bare-sentinel and missing-finish regression tests | `packages/ai/openai-compat/test/OpenAiLanguageModel.test.ts` |
 | Reasoning replay | Compatible, OpenRouter | Upstreamed in substance | Verify durable replay and provider metadata before dropping fork code | Agent replay tests |
 | Shared approval metadata | Compatible | Upstreamed | Compare declarations and remove duplicate fork types | Provider typecheck |
 | Nullable stream fields | Compatible | Upstreamed | Verify null roles, names, IDs, and continuation fragments | Compatible provider fixtures |
-| OpenRouter sentinel | OpenRouter | Upstreamed | Run combined and segmented sentinel fixtures against stable | `packages/model/src/providers/response.test.ts` |
-| OpenAI Responses sentinel | OpenAI | Not upstreamed | Stable fails when the terminal response and `[DONE]` share one chunk; retain the client parser patch | `packages/model/src/providers/response.test.ts` |
+| OpenRouter sentinel | OpenRouter | Upstreamed | Run combined and segmented sentinel fixtures against stable | `packages/ai/openrouter/test/OpenRouterLanguageModel.test.ts` |
+| OpenAI Responses sentinel | OpenAI | Not upstreamed | Stable fails when the terminal response and `[DONE]` share one chunk; retain the client parser patch | `packages/ai/openai/test/OpenAiLanguageModel.test.ts` |
 | OpenAI request boundary fixes | OpenAI | Upstreamed in substance | Retain explicit include and encrypted reasoning regressions during replacement | Provider boundary tests |
 | Compatible request boundary fixes | Compatible | Verify | Retain choice count and choice index regressions until stable passes | Provider boundary tests |
 | Anthropic usage accumulation | Anthropic | Upstreamed in substance | Verify null, omitted, and zero counter behavior | Anthropic stream fixtures |
