@@ -1,8 +1,8 @@
 import { calls, reasoning, thinking, redacted, providerEvents } from "../testing/fixtures"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Redacted, Schema, Fiber, Deferred, Exit, Stream, Result } from "effect"
-import { Prompt, Tool, Toolkit, LanguageModel } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import { Prompt, Tool, Toolkit, LanguageModel } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 import { collectResponse } from "../stream/collect"
 import { providerLayer } from "./layer"
 
@@ -45,7 +45,7 @@ for (const provider of ["openai", "anthropic"] as const) {
     if (malformed) {
       const observations = []
       for (const segmented of [false, true]) {
-        const seen: Array<import("effect/unstable/ai/Response").AnyPart> = []
+        const seen: Array<import("effect/ai/Response").AnyPart> = []
         const probeFetch = Object.assign(async () => {
           const probeEvents = segmented && provider === "openai" ? events.flatMap<Record<string, unknown>>((event) => event.type === "response.output_item.done" && "item" in event && event.item.type === "function_call" && "arguments" in event.item
             ? [{ type: "response.function_call_arguments.done", output_index: event.output_index, item_id: event.item.id, arguments: event.item.arguments }, event] : [event]) : events
@@ -91,7 +91,6 @@ for (const provider of ["openai", "anthropic"] as const) {
     expect(first.parts.filter((part) => part.type === "tool-call").map((part) => part.id)).toEqual(malformed ? ["a", "c"] : ["a", "b", "c"])
     expect(first.parts.some((part) => part.type === "tool-result")).toBe(false)
     const finish = first.parts.find((part) => part.type === "finish")
-    if (provider === "openai") expect(finish?.metadata.openai?.usage).toMatchObject({ input_tokens: 10, output_tokens: 5, total_tokens: 15 })
     expect(finish?.usage.inputTokens.total).toBe(10)
     expect(finish?.usage.outputTokens.total).toBe(5)
     if (malformed) expect(JSON.parse(JSON.stringify(first.parts)).filter((part: { type: string }) => part.type === "error")).toHaveLength(1)

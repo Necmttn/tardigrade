@@ -38,21 +38,21 @@
     "./request-policy": "./src/stream/policy.ts",
     "./output": "./src/output.ts",
     "./object": "./src/object.ts",
+    "./providers/language-model": "./src/providers/language-model.ts",
     "./object/*": "./src/object/*.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@tardie/ai-anthropic": "4.0.0-rc.113-clavia.6",
-    "@tardie/ai-openai": "4.0.0-rc.113-clavia.6",
-    "@tardie/ai-openai-compat": "4.0.0-rc.113-clavia.7",
-    "effect": "4.0.0-rc.115",
-    "@tardie/ai": "0.0.4",
-    "@tardie/ai-openrouter": "4.0.0-rc.113-clavia.3"
+    "@tardie/ai-anthropic": "4.0.1-clavia.0",
+    "@tardie/ai-openai": "4.0.1-clavia.0",
+    "@tardie/ai-openai-compat": "4.0.1-clavia.0",
+    "@tardie/ai-openrouter": "4.0.1-clavia.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "effect": "4.0.1"
   },
   "devDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2",
-    "@tardie/ai-bedrock": "0.0.8"
+    "@smithy/node-http-handler": "^4.11.2"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -60,17 +60,13 @@
   },
   "peerDependencies": {
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2",
-    "@tardie/ai-bedrock": "0.0.8"
+    "@smithy/node-http-handler": "^4.11.2"
   },
   "peerDependenciesMeta": {
     "@smithy/fetch-http-handler": {
       "optional": true
     },
     "@smithy/node-http-handler": {
-      "optional": true
-    },
-    "@tardie/ai-bedrock": {
       "optional": true
     }
   }
