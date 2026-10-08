@@ -3,7 +3,7 @@
 A local Celld actor uses Codex device authentication through a Bun Responses proxy. The actor has a current-time tool.
 
 ```text
-ask.ts → Celld actor → Responses proxy → Codex
+ask command → Celld actor → Responses proxy → Codex
               └→ current_time
 ```
 
@@ -14,17 +14,17 @@ Install Bun 1.4 or later, Celld, and esbuild. Put Celld and esbuild on PATH. Ins
 Set `model_id` and `contextWindowTokens` in `celld/models.lock.json` for a model available to your account. The supplied context value is an example. From the repository root:
 
 ```sh
-bun examples/codex-proxy/local.ts
+bun examples/codex-proxy/main.ts start
 ```
 
 Open the printed authentication URL and enter the device code. Wait for the proxy and Celld listeners. In another terminal:
 
 ```sh
-bun examples/codex-proxy/ask.ts
-bun examples/codex-proxy/ask.ts "Say hello."
+bun examples/codex-proxy/main.ts ask
+bun examples/codex-proxy/main.ts ask "Say hello."
 ```
 
-The launcher writes local access keys to ignored `celld/.dev.vars`. Credentials stay in the proxy process. Stop the launcher with Ctrl-C. Celld retains actor state under `celld/.celld/`.
+The launcher writes local access keys to ignored `celld/.dev.vars`. Credentials stay in the CLI process. Stop the command with Ctrl-C. Celld retains actor state under `celld/.celld/`.
 
 ## Configuration
 
@@ -32,7 +32,7 @@ The launcher writes local access keys to ignored `celld/.dev.vars`. Credentials 
 
 `ASK_WAIT_MS` sets the message deadline (default `180000`). `ASK_POLL_MS` sets the result check interval (default `1000`).
 
-Authentication defaults are exported in `auth.ts`. The device login function accepts overrides. The proxy handler accepts a request deadline and transport override.
+Authentication defaults are exported in `auth.ts`. `Codex` is an Effect service with a live layer. HTTP uses `HttpClient` and `HttpRouter`; files use `FileSystem`; time uses `Clock`; Celld uses a scoped `ChildProcessSpawner`. `main.ts` supplies the Bun runtime layers.
 
 ## Limits
 
