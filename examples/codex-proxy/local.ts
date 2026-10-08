@@ -12,7 +12,6 @@ const vars = resolve(project, ".dev.vars")
 await Bun.write(vars, [
   `PROXY_API_KEY=${key}`,
   `TARDIGRADE_TOKEN=${token}`,
-  `TARDIGRADE_CONFIG=${JSON.stringify({ models: { default: { provider: model.provider, model_id: model.model_id }, allow: [{ provider: model.provider, model_ids: [model.model_id] }], providers: modelLock.providers } })}`
 ].join("\n") + "\n", { mode: 0o600 })
 await chmod(vars, 0o600)
 const env = { ...process.env, PROXY_API_KEY: key, PATH: `${resolve(import.meta.dir, "../../node_modules/.bin")}:${process.env.PATH ?? ""}` }

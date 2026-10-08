@@ -1,16 +1,13 @@
 {
-  "name": "tardigrade-codex-mcp-prototype",
+  "name": "tardigrade-codex-proxy",
   "main": "worker.ts",
   "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
     "bindings": [
       { "name": "ACTORS", "class_name": "ActorDO" },
       { "name": "THREADS", "class_name": "ThreadDO" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }],
-  "vars": {
-    "TARDIGRADE_SANDBOX_TRANSPORT": "replay",
-    "TARDIGRADE_BACKGROUND_TASK_OWNER": "request"
-  }
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }]
 }

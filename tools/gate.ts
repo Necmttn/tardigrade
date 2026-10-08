@@ -35,7 +35,8 @@ const effectProjects = [
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
-  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name)))
+  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
+  ...tsconfigsIn(`${root}examples/codex-proxy`)
 ]
 
 const effectTaskId = (project: string): string => {

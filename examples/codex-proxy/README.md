@@ -30,6 +30,8 @@ The launcher writes local access keys to ignored `celld/.dev.vars`. Credentials 
 
 `CELLD_DEV_PORT` sets the actor port (default `9876`). `PROXY_REQUEST_MS` sets the model request deadline (default `180000`). `PROXY_BODY_BYTES` sets the request body limit (default `1048576`). To change the proxy port, set `PROXY_PORT` and update the provider URL in `celld/models.lock.json`.
 
+`ASK_WAIT_MS` sets the message deadline (default `180000`). `ASK_POLL_MS` sets the result check interval (default `1000`).
+
 Authentication defaults are exported in `auth.ts`. The device login function accepts overrides. The proxy handler accepts a request deadline and transport override.
 
 ## Limits
