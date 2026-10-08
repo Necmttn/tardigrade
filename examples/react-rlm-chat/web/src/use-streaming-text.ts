@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { EventRow, InferDelta } from "@clavia/tardigrade-client"
 
 import { actor, client } from "./chat-client"
+import { eventPollMs } from "./config"
 import { endsResponse } from "./events"
 
 import { appendAnswerDelta, type StreamingText } from "./streaming-text"
@@ -11,7 +12,7 @@ export const useStreamingText = (id: string | undefined, rows: ReadonlyArray<Eve
   const terminal = rows.findLast(({ event }) => endsResponse(event))?.seq
 
   useEffect(() => {
-    if (id === undefined || rows.length === 0) return
+    if (eventPollMs() || id === undefined || rows.length === 0) return
     setStreaming(undefined)
     return client.followInference(actor, id, {
       onDelta: (delta: InferDelta) => setStreaming((current) => appendAnswerDelta(current, delta))

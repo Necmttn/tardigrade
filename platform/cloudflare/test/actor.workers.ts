@@ -5,7 +5,7 @@ import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
-import { Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -446,6 +446,29 @@ describe("cloudflare actor", () => {
     })
 
     expect(resting).toBe(true)
+  })
+
+  test("cold rest checks receive component dependencies", async () => {
+    class Settings extends Context.Service<Settings, { ready: boolean }>()("test/ColdRestSettings") {}
+    const reader = component({
+      name: "settings",
+      dependencies: [Settings],
+      initial: (_children, [settings]) => settings,
+      step: (state) => state,
+      output: (state) => ({ view: state.ready, transitions: [] })
+    })
+    await runInDurableObject(threadStub("ag.cold-dependencies"), async (_instance, state) => {
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "ag.cold-dependencies",
+        actor: actor({ name: "echo", methods: {}, components: [reader] }),
+        layers: Layer.succeed(Settings, { ready: true })
+      })
+      try { expect(await host.resting()).toBe(true) }
+      finally { await host.close() }
+    })
   })
 
   test("a fired alarm leaves the next durable wake armed", async () => {
