@@ -1,28 +1,27 @@
-import { chmod } from "node:fs/promises"
-import { resolve } from "node:path"
+import { Config, Crypto, Effect } from "effect"
+import { FileSystem } from "effect/FileSystem"
+import { Path } from "effect/Path"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { RuntimeError } from "tardie/core"
 import modelLock from "./celld/models.lock.json"
 
 export const DEFAULT_ACTOR_PORT = 9876
-const model = modelLock.models[0]!
-if (model.model_id === "YOUR_MODEL_ID") throw new Error("Set your model and context window in celld/models.lock.json")
-const project = resolve(import.meta.dir, "celld")
-const key = crypto.randomUUID()
-const token = crypto.randomUUID()
-const vars = resolve(project, ".dev.vars")
-await Bun.write(vars, [
-  `PROXY_API_KEY=${key}`,
-  `TARDIGRADE_TOKEN=${token}`,
-].join("\n") + "\n", { mode: 0o600 })
-await chmod(vars, 0o600)
-const env = { ...process.env, PROXY_API_KEY: key, PATH: `${resolve(import.meta.dir, "../../node_modules/.bin")}:${process.env.PATH ?? ""}` }
-const proxy = Bun.spawn([process.execPath, resolve(import.meta.dir, "serve.ts")], { env, stdout: "inherit", stderr: "inherit" })
-const celld = Bun.spawn(["celld", "dev", project, "--port", String(process.env.CELLD_DEV_PORT ?? DEFAULT_ACTOR_PORT)], { env, stdout: "inherit", stderr: "inherit" })
-const stop = () => { proxy.kill(); celld.kill() }
-process.once("SIGINT", stop)
-process.once("SIGTERM", stop)
-try {
-  process.exitCode = await Promise.race([proxy.exited, celld.exited])
-} finally {
-  stop()
-  await Promise.allSettled([proxy.exited, celld.exited])
-}
+export const start = Effect.fn("start")(function* (directory: string) {
+  if (modelLock.models[0]!.model_id === "YOUR_MODEL_ID") return yield* Effect.fail(new RuntimeError("Set your model and context window in celld/models.lock.json"))
+  const fs = yield* FileSystem
+  const path = yield* Path
+  const crypto = yield* Crypto.Crypto
+  const key = yield* crypto.randomUUIDv4
+  const token = yield* crypto.randomUUIDv4
+  const project = path.join(directory, "celld")
+  const vars = path.join(project, ".dev.vars")
+  yield* fs.writeFileString(vars, `PROXY_API_KEY=${key}\nTARDIGRADE_TOKEN=${token}\n`, { mode: 0o600 })
+  yield* fs.chmod(vars, 0o600)
+  const port = yield* Config.Int("CELLD_DEV_PORT").pipe(Config.withDefault(DEFAULT_ACTOR_PORT))
+  const systemPath = yield* Config.String("PATH")
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+  const child = yield* spawner.spawn(ChildProcess.make("celld", ["dev", project, "--port", String(port)], {
+    env: { PATH: `${path.resolve(directory, "../../node_modules/.bin")}:${systemPath}` }, extendEnv: true, stdout: "inherit", stderr: "inherit"
+  }))
+  return { key, child }
+})

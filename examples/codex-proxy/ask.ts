@@ -1,31 +1,37 @@
-import { Schema } from "effect"
+import { Config, Console, Crypto, Effect, Schema } from "effect"
+import { FileSystem } from "effect/FileSystem"
+import { Path } from "effect/Path"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { RuntimeError } from "tardie/core"
+import { DEFAULT_ACTOR_PORT } from "./local"
 
-export const DEFAULT_ACTOR_PORT = 9876
 export const DEFAULT_POLL_MS = 1000
 export const DEFAULT_WAIT_MS = 180_000
-const origin = `http://127.0.0.1:${process.env.CELLD_DEV_PORT ?? DEFAULT_ACTOR_PORT}`
-const vars = await Bun.file(new URL("celld/.dev.vars", import.meta.url)).text()
-const token = vars.split("\n").find(line => line.startsWith("TARDIGRADE_TOKEN="))?.slice("TARDIGRADE_TOKEN=".length)
-if (!token) throw new Error("Run local.ts first")
-const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" }
-const signal = AbortSignal.timeout(Number(process.env.ASK_WAIT_MS ?? DEFAULT_WAIT_MS))
-const exchange = async (path: string, options: RequestInit = {}): Promise<unknown> => {
-  const response = await fetch(`${origin}${path}`, { ...options, headers: { ...headers, ...options.headers }, signal })
-  if (!response.ok) throw new Error(`Actor returns ${response.status}`)
-  return response.json()
-}
-const coordinate = Schema.decodeUnknownSync(Schema.Struct({ thread: Schema.String }))(await exchange("/v1/actors/demo/threads", {
-  method: "POST", body: JSON.stringify({ name: crypto.randomUUID() })
-}))
-const path = `/v1/actors/demo/threads/${encodeURIComponent(coordinate.thread)}/methods/message`
-const id = crypto.randomUUID()
-await exchange(path, { method: "POST", headers: { "idempotency-key": id }, body: JSON.stringify({ text: process.argv[2] ?? "What time is it? Use the tool." }) })
-for (;;) {
-  const result = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(await exchange(`${path}/calls/${id}`))
-  if (result.status !== "pending") {
-    console.log(result)
-    if (result.status !== "completed") process.exitCode = 1
-    break
+export const ask = Effect.fn("ask")(function* (directory: string, text: string) {
+  const fs = yield* FileSystem
+  const path = yield* Path
+  const crypto = yield* Crypto.Crypto
+  const port = yield* Config.Int("CELLD_DEV_PORT").pipe(Config.withDefault(DEFAULT_ACTOR_PORT))
+  const pollMs = yield* Config.Int("ASK_POLL_MS").pipe(Config.withDefault(DEFAULT_POLL_MS))
+  const vars = yield* fs.readFileString(path.join(directory, "celld/.dev.vars"))
+  const token = vars.split("\n").find(line => line.startsWith("TARDIGRADE_TOKEN="))?.slice("TARDIGRADE_TOKEN=".length)
+  if (!token) return yield* Effect.fail(new RuntimeError("Run the start command first"))
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk, HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", `Bearer ${token}`)))
+  const origin = `http://127.0.0.1:${port}/v1/actors/demo/threads`
+  const name = yield* crypto.randomUUIDv4
+  const allocated = yield* client.execute(HttpClientRequest.post(origin).pipe(HttpClientRequest.bodyJsonUnsafe({ name })))
+  const coordinate = yield* Schema.decodeUnknownEffect(Schema.Struct({ thread: Schema.String }))(yield* allocated.json)
+  const url = `${origin}/${encodeURIComponent(coordinate.thread)}/methods/message`
+  const id = yield* crypto.randomUUIDv4
+  const accepted = yield* client.execute(HttpClientRequest.post(url).pipe(HttpClientRequest.setHeader("idempotency-key", id), HttpClientRequest.bodyJsonUnsafe({ text })))
+  yield* accepted.text
+  for (;;) {
+    const response = yield* client.get(`${url}/calls/${id}`)
+    const result = yield* Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown))(yield* response.json)
+    if (result.status !== "pending") {
+      if (result.status !== "completed") return yield* Effect.fail(new RuntimeError(`Actor returns ${result.status}`))
+      return yield* Console.log(result.output)
+    }
+    yield* Effect.sleep(pollMs)
   }
-  await Bun.sleep(Number(process.env.ASK_POLL_MS ?? DEFAULT_POLL_MS))
-}
+})
