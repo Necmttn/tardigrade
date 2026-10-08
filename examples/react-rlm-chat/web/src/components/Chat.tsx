@@ -8,12 +8,11 @@ import { activeMessageCall, mergeEvents, readEvents } from "../events"
 import { useStreamingText } from "../use-streaming-text"
 import { Composer } from "./Composer"
 import { messageWithFiles, readUploadPolicy } from "../attachments"
-import { apiUrl, eventPollMs } from "../config"
+import { apiUrl } from "../config"
 import { SideThread } from "./SideThread"
 import { ThreadSidebar } from "./ThreadSidebar"
 import { Transcript } from "./Transcript"
 
-const pollMs = eventPollMs()
 const THREAD_KEY = "tardigrade.chat.thread"
 const initialThread = localStorage.getItem(THREAD_KEY)
 const initialName = crypto.randomUUID()
@@ -48,14 +47,13 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
   })
   const [selectedChild, setSelectedChild] = useState<string | undefined>(undefined)
   const [streamVersion, setStreamVersion] = useState(0)
-  const events = useQuery({ queryKey: eventsKey, queryFn: () => readEvents(thread), refetchInterval: pollMs })
+  const events = useQuery({ queryKey: eventsKey, queryFn: () => readEvents(thread) })
   const uploads = useQuery({ queryKey: ["upload-policy"], queryFn: () => readUploadPolicy(apiUrl()), retry: false })
-  const threads = useQuery({ queryKey: ["threads", actor], queryFn: () => client.list(actor), refetchInterval: pollMs })
+  const threads = useQuery({ queryKey: ["threads", actor], queryFn: () => client.list(actor) })
   const childEventsKey = ["events", actor, selectedChild] as const
   const childEvents = useQuery({
     queryKey: childEventsKey,
     queryFn: () => readEvents(selectedChild!),
-    refetchInterval: pollMs,
     enabled: selectedChild !== undefined
   })
   const send = useMutation({
@@ -87,7 +85,7 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
   })
 
   useEffect(() => {
-    if (pollMs || !events.isFetched) return
+    if (!events.isFetched) return
     const current = cache.getQueryData<ReadonlyArray<EventRow>>(eventsKey) ?? []
     if (current.length === 0) return
     return client.follow(actor, thread, {
@@ -96,14 +94,14 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
     })
   }, [cache, events.isFetched, streamVersion, thread])
 
-  useEffect(() => pollMs ? undefined : client.followThreads(actor, {
+  useEffect(() => client.followThreads(actor, {
     onEvent: ({ event }) => {
       if (event.type === "ThreadAdded") void cache.invalidateQueries({ queryKey: ["threads", actor] })
     }
   }), [cache])
 
   useEffect(() => {
-    if (pollMs || selectedChild === undefined || !childEvents.isFetched) return
+    if (selectedChild === undefined || !childEvents.isFetched) return
     const current = cache.getQueryData<ReadonlyArray<EventRow>>(childEventsKey) ?? []
     return client.follow(actor, selectedChild, {
       after: current.at(-1)?.seq,
@@ -128,9 +126,7 @@ const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
         threads={threads.data ?? []}
       />
       <main className="shell">
-        <header className="root-head"><strong>{import.meta.env.VITE_CHAT_TITLE ?? "Recursive Chat"}</strong></header>
-        {pollMs ? <p role="status">Updates every {pollMs} ms. Responses appear when complete.</p> : null}
-        {import.meta.env.VITE_CHAT_NOTICE ? <p role="status">{import.meta.env.VITE_CHAT_NOTICE}</p> : null}
+        <header className="root-head"><strong>Recursive Chat</strong></header>
         <Transcript
           empty="Ask this agent about the files in its workspace."
           onOpenThread={setSelectedChild}

@@ -36,7 +36,8 @@ const effectProjects = [
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
-  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name)))
+  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
+  ...tsconfigsIn(`${root}examples/codex-proxy`)
 ]
 
 const effectTaskId = (project: string): string => {
@@ -80,6 +81,8 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "x", "--no-install", "tsc", "--noEmit", "-p", "tsconfig.workers.json"] },
   ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
+  { id: "typecheck:example-codex-proxy", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit", "-p", "examples/codex-proxy/tsconfig.json"] },
+  { id: "test:example-codex-proxy", cmd: ["bun", "test", "examples/codex-proxy/proxy.test.ts"] },
   ...testedPackages.map((name) => ({ id: `test:${packageId(name)}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform", cwd: pkg("platform"), cmd: ["bun", "run", "test"] },
   { id: "test:platform:workers", cwd: pkg("platform"), cmd: ["bun", "run", "test:workers"] },
