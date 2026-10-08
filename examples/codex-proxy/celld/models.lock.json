@@ -1,0 +1,23 @@
+{
+  "schema": 2,
+  "providers": {
+    "codex": {
+      "protocol": "openai-responses",
+      "baseUrl": "http://127.0.0.1:8789/v1",
+      "env": [
+        "PROXY_API_KEY"
+      ]
+    }
+  },
+  "models": [
+    {
+      "provider": "codex",
+      "model_id": "YOUR_MODEL_ID",
+      "contextWindowTokens": 32768,
+      "toolCall": true,
+      "options": {
+        "store": false
+      }
+    }
+  ]
+}

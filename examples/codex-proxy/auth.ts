@@ -26,7 +26,7 @@ function claims(token: string): Record<string, unknown> {
 }
 
 export async function deviceLogin(options: AuthOptions, announce: (url: string, code: string) => void) {
-  const post = (path: string, body: BodyInit, contentType: string, signal?: AbortSignal) => fetch(`${options.issuer}${path}`, {
+  const post = (path: string, body: string | URLSearchParams, contentType: string, signal?: AbortSignal) => fetch(`${options.issuer}${path}`, {
     method: "POST", body, redirect: "error",
     headers: { "content-type": contentType },
     signal: AbortSignal.any([AbortSignal.timeout(options.requestMs), ...(signal ? [signal] : [])]),

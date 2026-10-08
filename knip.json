@@ -12,16 +12,13 @@
     ".": {
       "ignoreDependencies": [
         "@effect/tsgo",
-        "@effect/language-service",
-        "vite",
-        "@vitejs/plugin-react"
+        "@effect/language-service"
       ],
       "entry": [
         "tools/*.ts",
         "tools/**/*.test.ts",
         "examples/*/*.ts",
-        "examples/codex-proxy-prototype/src/*.ts",
-        "examples/codex-proxy-prototype/celld/worker.ts"
+        "examples/codex-proxy/celld/worker.ts"
       ],
       "project": [
         "tools/**/*.ts",

@@ -9,10 +9,3 @@ export const actorInstance = (value: unknown = import.meta.env.VITE_ACTOR_ID): s
 
 export const apiUrl = (value: unknown = import.meta.env.VITE_API_URL): string =>
   configured(value) ?? (typeof location === "undefined" ? DEFAULT_API_URL : location.origin)
-
-export const DEFAULT_EVENT_POLL_MS = 0
-export const eventPollMs = (value: unknown = import.meta.env.VITE_EVENT_POLL_MS): number | false => {
-  const interval = Number(value ?? DEFAULT_EVENT_POLL_MS)
-  if (!Number.isSafeInteger(interval) || interval < 0) throw new Error("VITE_EVENT_POLL_MS must be a non-negative integer")
-  return interval === 0 ? false : interval
-}
