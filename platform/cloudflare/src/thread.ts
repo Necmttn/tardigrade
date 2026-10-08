@@ -1,24 +1,26 @@
+import { cloudflareRetryPolicy, makeRetryingAlarms, makeRetryingRpc, retryCloudflareOperation } from "./retry"
+import type { CloudflareErrorClassification } from "./layers/error"
 import { AlarmScheduler } from "./alarm-scheduler"
-import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
-import { eventTail, inferenceTail } from "@clavia/tardigrade-http/sse"
-import { makeInferenceStream } from "@clavia/tardigrade-http/inference-stream"
-import { summaryOf, type ThreadSummary } from "@clavia/tardigrade-http/projections"
-import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
+import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-deprecated-core/interaction/relations"
+import { eventTail, inferenceTail } from "@clavia/tardigrade-deprecated-http/sse"
+import { makeInferenceStream } from "@clavia/tardigrade-deprecated-http/inference-stream"
+import { summaryOf, type ThreadSummary } from "@clavia/tardigrade-deprecated-http/projections"
+import { publicThreadId } from "@clavia/tardigrade-deprecated-host/thread-compat"
 import { CommitSignal, streamPolicyOf } from "./transport/stream"
 import { cloudflareRpcTransport } from "./transport/rpc"
 import { actorObjectNameOf } from "./transport/directory"
-import { forkOutcomeOf } from "@clavia/tardigrade-host/fork"
-import { validateDelivery } from "@clavia/tardigrade-host/delivery"
+import { forkOutcomeOf } from "@clavia/tardigrade-deprecated-host/fork"
+import { validateDelivery } from "@clavia/tardigrade-deprecated-host/delivery"
 import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema, Stream } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
-import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
-import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { mappedDirectory } from "@clavia/tardigrade-deprecated-core/transport/directory"
+import { directoryRoute } from "@clavia/tardigrade-deprecated-core/transport/router"
+import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-deprecated-core/interaction/envelope"
+import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
+import { actorRuntimeOf } from "@clavia/tardigrade-deprecated-core/runtime"
 import { layerWorkerLoaderSandbox, type WorkerLoaderSandboxLimits } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { initializeCloudflareThreadSchema } from "./storage"
@@ -36,6 +38,9 @@ export class ThreadDO extends DurableObject<Env> {
   private actorName: string | undefined
   private actorInstance: string | undefined
   private threadId: string | undefined
+  private get storageAlarms() {
+    return makeRetryingAlarms(this.ctx.storage, { retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) })
+  }
   private readonly alarmPolicy: AlarmPolicy
   private readonly backgroundTaskOwner: BackgroundTaskOwner
 
@@ -78,7 +83,7 @@ export class ThreadDO extends DurableObject<Env> {
     const host = await this.host()
     const result = await host.appendAt(initial, 0)
     if (result.appended === 0 && initial.some((event) => event.type === "ThreadForked")) forkOutcomeOf(await host.read(), initial, identity.thread)
-    await this.ctx.storage.sync()
+    await Effect.runPromise(this.storageAlarms.sync)
     const recorded = threadCreatedOf(await host.read())
     if (recorded === undefined) throw new Error("thread creation was not recorded")
     return recorded
@@ -174,6 +179,7 @@ export class ThreadDO extends DurableObject<Env> {
         })
       },
       storage: this.ctx.storage,
+      retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG),
       actorName,
       actorInstance,
       thread: currentThread,
@@ -197,16 +203,30 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   private host(): Promise<CloudflareThreadHost> {
-    this.runtime ??= this.openHost()
-    return this.runtime
+    if (this.runtime !== undefined) return this.runtime
+    const opening = Effect.runPromise(retryCloudflareOperation(
+      Effect.tryPromise({
+        try: () => this.openHost(),
+        catch: (cause): CloudflareErrorClassification & { readonly cause: unknown } => ({ classification: "transient", cause })
+      }),
+      { retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG), operation: "ThreadDO.openHost", replaySafe: true }
+    )).catch((failure: unknown) => {
+      if (this.runtime === opening) this.runtime = undefined
+      if (typeof failure === "object" && failure !== null && "classification" in failure && "cause" in failure) {
+        throw failure.cause
+      }
+      throw failure
+    })
+    this.runtime = opening
+    return opening
   }
 
   private scheduler(): AlarmScheduler {
-    return this.alarmScheduler ??= new AlarmScheduler(this.ctx.storage, this.alarmPolicy.recoveryDelayMillis)
+    return this.alarmScheduler ??= new AlarmScheduler(this.ctx.storage, this.alarmPolicy.recoveryDelayMillis, { retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) })
   }
 
   private async synchronizeAlarm(host: CloudflareThreadHost): Promise<void> {
-    const current = await this.ctx.storage.getAlarm()
+    const current = await Effect.runPromise(this.storageAlarms.get)
     const at = scheduledAlarmAt(
       current,
       await host.resting(),
@@ -215,9 +235,9 @@ export class ThreadDO extends DurableObject<Env> {
       await host.nextAlarmDeadline()
     )
     if (at === null) {
-      if (current !== null) await this.ctx.storage.deleteAlarm()
+      if (current !== null) await Effect.runPromise(this.storageAlarms.delete)
     } else if (current !== at) {
-      await this.ctx.storage.setAlarm(at)
+      await Effect.runPromise(this.storageAlarms.set(at))
     }
   }
 
@@ -247,7 +267,7 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
-  // appendAt admits the complete fork batch before alarm-driven execution (packages/core/tla/interaction/Fork.tla, AtomicPublication).
+  // appendAt admits the complete fork batch before alarm-driven execution (packages/deprecated/core/tla/interaction/Fork.tla, AtomicPublication).
   async appendAt(events: ReadonlyArray<Event>, expectedHead: number): Promise<{ readonly appended: number; readonly head: number }> {
     if (!this.initialized()) throw new Error("Thread DO has not been initialized")
     const host = await this.host()
@@ -362,12 +382,16 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    const host = await this.host()
+    let host: CloudflareThreadHost | undefined
     await this.scheduler().run(async () => {
+      const openedHost = await this.host()
+      host = openedHost
       const identity = this.identity()
-      await this.env.ACTORS.getByName(actorObjectNameOf(identity.actor, identity.instance)).ensureThreadReady(identity.thread)
-      await host.recordAlarm(Date.now())
-      await host.recover()
-    }, () => this.synchronizeAlarm(host))
+      await Effect.runPromise(makeRetryingRpc({ retry: cloudflareRetryPolicy(this.env.TARDIGRADE_CONFIG) }).call(
+        this.env.ACTORS, actorObjectNameOf(identity.actor, identity.instance), "ensureThreadReady", stub => stub.ensureThreadReady(identity.thread), true
+      ))
+      await openedHost.recordAlarm(Date.now())
+      await openedHost.recover()
+    }, () => host === undefined ? Promise.resolve() : this.synchronizeAlarm(host))
   }
 }

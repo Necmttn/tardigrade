@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { ACTOR_ARTIFACT_VERSION } from "tardie"
+import { ACTOR_ARTIFACT_VERSION } from "tardie/deprecated"
 
 import {
   ACTOR_MANIFEST_FILE,
@@ -30,7 +30,7 @@ const entry = async (source: string): Promise<string> => {
 describe("buildActor", () => {
   test("writes a named portable artifact", async () => {
     const path = await entry(`
-      import { actor } from "tardie"
+      import { actor } from "tardie/deprecated"
       export default actor({
         name: "researcher",
         methods: {},
@@ -62,7 +62,7 @@ describe("buildActor", () => {
 
   test("the summary identifies the artifact", async () => {
     const path = await entry(`
-      import { actor } from "tardie"
+      import { actor } from "tardie/deprecated"
       export default actor({
         name: "researcher",
         methods: {},
@@ -80,11 +80,30 @@ describe("buildActor", () => {
 })
 
 describe("lintActor", () => {
+  test("accepts atom methods declared only inside actor setup", async () => {
+    const path = await entry(`
+      import { Effect, Schema } from "effect"
+      import { actorMethod, atom, defineActor, event } from "tardie/core"
+      const Received = event({ type: "Received", value: Schema.String })
+      export default defineActor("counter", Effect.succeed({
+        atom: atom(0),
+        methods: { inspect: actorMethod({ inputSchema: Schema.String, outputSchema: Schema.String,
+          onReceive: Received.from(value => ({ value })),
+          result: input => ({ status: "completed", output: input }),
+        }) },
+      }))
+    `)
+    await symlink(new URL("../../../node_modules", import.meta.url).pathname, join(root, "node_modules"), "dir")
+    const linted = await lintActor(path, { cwd: root })
+    expect(linted).toEqual({ name: "counter", methods: null, calls: [] })
+    expect(lintSummary(linted)).toContain("methods validated during actor setup")
+    expect((await buildActor(path, { cwd: root, out: "output" })).manifest.runtime).toBe("atoms")
+  })
   test("reports the methods and calls derived from component contracts", async () => {
     const path = await entry(`
       import {
         actor, agentMethods, budget, caller, escalate, codeMode, infer, nativeOutput
-      } from "tardie"
+      } from "tardie/deprecated"
       export default actor({
         name: "researcher",
         methods: agentMethods,
@@ -113,7 +132,7 @@ describe("lintActor", () => {
 
   test("refuses a declared method with no component handler", async () => {
     const path = await entry(`
-      import { actor, agentMessageMethod } from "tardie"
+      import { actor, agentMessageMethod } from "tardie/deprecated"
       export default actor({ name: "researcher", methods: { message: agentMessageMethod }, components: [] })
     `)
     await expect(lintActor(path, { cwd: root })).rejects.toThrow('method "message" has no handler')

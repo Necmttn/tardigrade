@@ -11,6 +11,8 @@ bun install
 bun run setup
 ```
 
+`bun install` generates the workspace public facades from `tools/public-exports.json`. Run `bun run exports` after editing the export declaration; the gate checks that the workspace facade matches the published package.
+
 `bun run setup` points git at the tracked hooks directory (`git config core.hooksPath .githooks`). Two hooks run there. `pre-commit` checks the prose rules when a commit touches markdown, which takes milliseconds and catches a wrapped paragraph before you write the commit message. `pre-push` runs the same gate as CI, so a local failure surfaces before the remote round trip. Use narrow gate commands while you iterate. `--no-verify` bypasses either hook for exceptional workflows.
 
 ## Before you open a PR
@@ -28,6 +30,34 @@ The Effect lint reads rules the type checker does not carry: an effect nobody yi
 The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code linter cannot see. A paragraph is one line, because hard wrapping bakes one editor's width into the source and makes a one-word change read as a reflowed block. A document states what is true now, so words that narrate the repository's own history belong in the commit and the pull request.
 
 CI installs with `bun install --frozen-lockfile` and runs the full `bun run gate` for code changes and pushes to `main`. For PRs that change only `docs/`, the required `gate` job runs `bun run gate --only=lint:docs,build:app-web` to check prose and compile the documentation site. Commit `bun.lock` with any dependency change.
+
+## Web deployment
+
+Web deployment is manual. In GitHub Actions, select `deploy-web`, choose **Run workflow**, and use the `main` branch. The workflow checks prose, typechecks the web app, and builds it before deploying to Vercel production.
+
+## Long-running fixture
+
+The 10k-event workerd regression is opt-in and runs outside the gate:
+
+```sh
+bun run --cwd packages/platform test:workers:long
+```
+
+## Deployed fixture flow
+
+The platform has an opt-in flow against real Cloudflare Workers. Authenticate Wrangler, then run:
+
+```sh
+bun run --cwd packages/platform test:deployed
+```
+
+The command deploys a uniquely named fixture Worker, runs the same thread creation and messaging flow as the local workerd tests, then deletes its Durable Object namespaces and Worker in teardown. It is outside the gate. Use `--dry-run` to check the fixture bundle without deploying. Use `--url URL` to run against an existing deployment of the same fixture, including Celld; this mode leaves that deployment in place and reads its bearer token from `FIXTURE_TOKEN`.
+
+## Actor capabilities
+
+Actor modules propose acts and read data services. Act implementations and platform wiring own I/O. The overrides in [.oxlintrc.json](.oxlintrc.json) apply to agent atoms and contracts, CLI actor entrypoints, the supervisor, and `actors/` directories. Keep actor definitions in these locations and put implementation layers in `services/` modules or platform entrypoints. Import shared schemas from data contract modules.
+
+Oxlint's built-in restricted-import, restricted-global, and restricted-property rules reject service imports, Node built-ins, ambient I/O, timers, act layer wiring, and direct Effect execution in these modules. The global checks include `globalThis`, `window`, `self`, and `global`. These checks are syntactic: they do not establish transitive helper purity or prevent every computed import or aliased property access. Capability selection in the runtime remains a separate boundary.
 
 ## PR expectations
 

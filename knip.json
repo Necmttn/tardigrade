@@ -5,9 +5,24 @@
     "@clavia/tardigrade-ui"
   ],
   "workspaces": {
-    "packages/experimental/examples": {
+    "packages/tardie": {
+      "entry": ["src/generated/**/*.ts!", "src/deprecated/*.ts!"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/platform": {
+      "entry": ["test/workerd/fixture.worker.ts", "test/workerd/agent-fixture.worker.ts", "test/workerd/*.workers.ts"],
+      "project": ["src/**/*.ts!", "test/**/*.ts"],
+      "ignoreIssues": {
+        "src/cloudflare/index.ts": ["duplicates"]
+      }
+    },
+    "packages/deprecated/agent": {
+      "entry": ["fixtures/binding.ts"],
+      "project": ["src/**/*.ts", "fixtures/**/*.ts"]
+    },
+    "packages/examples": {
       "entry": ["*.ts!"],
-      "project": ["*.ts"]
+      "project": ["**/*.ts"]
     },
     ".": {
       "ignoreDependencies": [
@@ -23,11 +38,6 @@
       "project": [
         "tools/**/*.ts",
         "examples/**/*.ts"
-      ]
-    },
-    "e2e": {
-      "project": [
-        "**/*.ts"
       ]
     },
     "examples/react-rlm-chat/server": {
@@ -53,16 +63,12 @@
     },
     "platform/cloudflare": {
       "entry": [
-        "test/fixture.worker.ts",
-        "vitest.e2e.config.ts",
-        "test-e2e/*.workers.ts",
-        "test-e2e/fixture.worker.ts"
+        "test/fixture.worker.ts"
       ],
       "project": [
         "src/**/*.ts",
         "test/**/*.ts",
-        "*.config.ts",
-        "test-e2e/**/*.ts"
+        "*.config.ts"
       ]
     },
     "packages/model": {
@@ -106,11 +112,13 @@
     "apps/web": {
       "entry": [
         "src/**/*.test.ts",
-        "../../docs/**/*.mdx"
+        "../../docs/**/*.mdx",
+        "../../notes/**/*.mdx"
       ],
       "project": [
         "src/**/*.{ts,tsx}!",
-        "../../docs/**/*.mdx"
+        "../../docs/**/*.mdx",
+        "../../notes/**/*.mdx"
       ]
     }
   }

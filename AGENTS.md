@@ -11,7 +11,7 @@ No silent hardcoding. When the framework applies a policy value, such as a cap, 
 On this workstation, TLAPS is installed at `~/.local/opt/tlaps` and TLC at `~/.local/opt/tla2tools/tla2tools.jar`. Use these paths before searching for or downloading tools. `~/.local/opt/tlaps/bin/tlapm --version` identifies the installed proof manager. Java is available at `/opt/homebrew/opt/openjdk/bin/java`.
 
 ```sh
-~/.local/opt/tlaps/bin/tlapm --strict --nofp --cache-dir /tmp/tardigrade-tlaps-proof packages/core/tla/component/ResponseIdentity.tla
+~/.local/opt/tlaps/bin/tlapm --strict --nofp --cache-dir /tmp/tardigrade-tlaps-proof packages/deprecated/core/tla/component/ResponseIdentity.tla
 TLA_JAVA=/opt/homebrew/opt/openjdk/bin/java TLA2TOOLS_JAR="$HOME/.local/opt/tla2tools/tla2tools.jar" bun run tla InteractionSubstitution
 ```
 
@@ -21,6 +21,7 @@ TLAPS needs process inspection to launch its backends; a sandbox error from `/bi
 
 - Title a pull request in the commit format, the same as any commit: `type(scope?): message`, 3 to 5 words. The title becomes the squash commit subject, so it lands in the log as written.
 - The pull request body follows the rules in the global writing style. It is read cold, so it states the change and the reason in full.
+- Prefer compact PR bodies: use minimal prose, an ASCII flow or architecture diagram, a logical file tree with per-file `+/-` counts, and one brief change note.
 
 ## Commits
 

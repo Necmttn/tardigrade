@@ -1,4 +1,6 @@
 import { armAt } from "./alarm"
+import { Effect } from "effect"
+import { makeRetryingAlarmPersistence, type CloudflareAlarmOptions } from "./retry"
 
 interface AlarmStorage {
   getAlarm(): Promise<number | null>
@@ -13,7 +15,11 @@ export class AlarmScheduler {
   private running: Promise<void> | undefined
   private readonly waiters = new Map<number, { resolve(): void; reject(cause: unknown): void }>()
 
-  constructor(private readonly storage: AlarmStorage, private readonly recoveryDelayMillis: number) {}
+  private readonly alarms: ReturnType<typeof makeRetryingAlarmPersistence>
+
+  constructor(storage: AlarmStorage, private readonly recoveryDelayMillis: number, options: CloudflareAlarmOptions = {}) {
+    this.alarms = makeRetryingAlarmPersistence(storage, options)
+  }
 
   private serialize<A>(action: () => Promise<A>): Promise<A> {
     const next = this.admission.then(action)
@@ -24,8 +30,8 @@ export class AlarmScheduler {
   async admit<A>(stage: () => Promise<A>, publish: () => void = () => {}): Promise<A> {
     return this.serialize(async () => {
       const result = await stage()
-      await this.storage.setAlarm(Date.now())
-      await this.storage.sync()
+      await Effect.runPromise(this.alarms.set(Date.now()))
+      await Effect.runPromise(this.alarms.sync)
       this.version++
       publish()
       return result
@@ -54,9 +60,9 @@ export class AlarmScheduler {
     try {
       await this.serialize(async () => {
         version = this.version
-        const at = armAt(await this.storage.getAlarm(), Date.now(), this.recoveryDelayMillis)
-        if (at !== null) await this.storage.setAlarm(at)
-        await this.storage.sync()
+        const at = armAt(await Effect.runPromise(this.alarms.get), Date.now(), this.recoveryDelayMillis)
+        if (at !== null) await Effect.runPromise(this.alarms.set(at))
+        await Effect.runPromise(this.alarms.sync)
       })
       await execute()
       await this.serialize(async () => {

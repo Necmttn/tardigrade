@@ -5,14 +5,14 @@ import { expect, test } from "bun:test"
 import { rewriteComponentRuntimeImports, stageInitTemplates } from "./publish-paths"
 
 test("private runtime imports resolve inside the assembled package", () => {
-  expect(rewriteComponentRuntimeImports('import { machineOf } from "../../../../core/src/component/runtime"',
-    "/stage/src/agent/component/budget/index.ts", "/stage/src"))
+  expect(rewriteComponentRuntimeImports('import { machineOf } from "../../../../deprecated/core/src/component/runtime"',
+    "/stage/src/deprecated/agent/component/budget/index.ts", "/stage/src"))
     .toBe('import { machineOf } from "../../../core/component/runtime"')
-  expect(rewriteComponentRuntimeImports("import { registerComponent } from '../../../core/src/component/runtime'",
+  expect(rewriteComponentRuntimeImports("import { registerComponent } from '../../../deprecated/core/src/component/runtime'",
     "/stage/src/code/package/definition.ts", "/stage/src"))
-    .toBe("import { registerComponent } from '../../core/component/runtime'")
+    .toBe("import { registerComponent } from '../../deprecated/core/component/runtime'")
   const withinCore = 'import { machineOf } from "./runtime"'
-  expect(rewriteComponentRuntimeImports(withinCore, "/stage/src/core/component/machine.ts", "/stage/src")).toBe(withinCore)
+  expect(rewriteComponentRuntimeImports(withinCore, "/stage/src/deprecated/core/component/machine.ts", "/stage/src")).toBe(withinCore)
 })
 
 test("template staging excludes local state and secrets, including stale output", async () => {
@@ -23,6 +23,7 @@ test("template staging excludes local state and secrets, including stale output"
       const source = join(root, "examples", template)
       await mkdir(join(source, ".tardigrade"), { recursive: true })
       await writeFile(join(source, "actor.ts"), `export default "${template}"`)
+      if (template === "quickstart") for (const file of ["services.ts.template", "server.ts.template", "worker.ts.template"]) await writeFile(join(source, file), "export {}")
       await writeFile(join(source, ".env"), "SECRET=fixture")
       await writeFile(join(source, ".tardigrade", "actor.sqlite"), "private conversation")
     }
@@ -32,7 +33,7 @@ test("template staging excludes local state and secrets, including stale output"
     expect((await readdir(join(stage, "examples"))).sort()).toEqual(["quickstart", "rlm"])
     for (const template of ["quickstart", "rlm"]) {
       const target = join(stage, "examples", template)
-      expect(await readdir(target)).toEqual(["actor.ts"])
+      expect((await readdir(target)).sort()).toEqual(template === "quickstart" ? ["actor.ts", "server.ts.template", "services.ts.template", "worker.ts.template"] : ["actor.ts"])
       expect(await readFile(join(target, "actor.ts"), "utf8")).toBe(`export default "${template}"`)
     }
   } finally {

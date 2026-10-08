@@ -1,20 +1,20 @@
 import { modelLockService } from "@clavia/tardigrade-model/lock"
 import { upgradeModelLock } from "@clavia/tardigrade-model/lock-compat"
 import { ModelLock } from "@clavia/tardigrade-model/lock"
-import { threadSupervisor } from "@clavia/tardigrade-core/actor/supervisor"
-import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
-import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { threadSupervisor } from "@clavia/tardigrade-deprecated-core/actor/supervisor"
+import { childKeyOf } from "@clavia/tardigrade-deprecated-core/actor/coordinate"
+import { threadCreated } from "@clavia/tardigrade-deprecated-core/interaction/relations"
 import { env, runInDurableObject, evictDurableObject, SELF } from "cloudflare:test"
 import { Effect, Layer, Schema } from "effect"
-import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
+import { actor, actorMethod, component } from "@clavia/tardigrade-deprecated-core/actor"
 
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-deprecated-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
-import { makeActorClient } from "@clavia/tardigrade-client"
-import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
-import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
-import { alarmSet } from "@clavia/tardigrade-core/alarm"
+import { makeActorClient } from "@clavia/tardigrade-deprecated-client"
+import type { ModelCatalog } from "@clavia/tardigrade-deprecated-client/contract"
+import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-deprecated-core/runtime"
+import { deadlineCancellationEventsAt } from "@clavia/tardigrade-deprecated-core/interaction/timeout"
+import { alarmSet } from "@clavia/tardigrade-deprecated-core/alarm"
 import {
   createWorker,
   workerModelServices,
@@ -32,6 +32,7 @@ import { ModelSelection } from "@clavia/tardigrade-model/settings"
 import { modelLayer, modelsFrom, mountedActor, modelStateFrom, publicCatalog } from "../src/assembly"
 import { cloudflareModelRegistryCache } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
+import { ThreadDO } from "../src/thread"
 import { plaintextEventCodec } from "../src/storage"
 
 const authorization = { authorization: "Bearer workers-test-token" }
@@ -64,6 +65,56 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 
 const hasHoldEvent = (events: ReadonlyArray<Event>, type: string, id: string): boolean =>
   events.some((event) => event.type === type && String((event as { readonly id?: unknown }).id) === id)
+
+test("a failed host open retries on the next alarm and preserves its watchdog", async () => {
+  const thread = "host-open-retry"
+  const stub = threadStub(thread)
+  await runInDurableObject(stub, (instance) => instance.init("echo", "main", thread))
+  await evictDurableObject(stub)
+  try {
+    await runInDurableObject(stub, async (instance, state) => {
+      const runtime = instance as unknown as ThreadDO & { openHost(): Promise<never> }
+      const originalEnv = runtime.env
+      Object.defineProperty(runtime, "env", {
+        configurable: true,
+        value: {
+          ...originalEnv,
+          TARDIGRADE_CONFIG: {
+            ioRetry: {
+              maxAttempts: 1,
+              initialDelayMillis: 0,
+              maxDelayMillis: 0,
+              backoffFactor: 1,
+              jitter: 0,
+              attemptTimeoutMillis: 1_000,
+              totalTimeoutMillis: 1_000
+            }
+          }
+        }
+      })
+      try {
+        let attempts = 0
+        runtime.openHost = async () => {
+          attempts++
+          throw new Error(`transient host failure ${attempts}`)
+        }
+        await expect(instance.alarm()).rejects.toThrow("transient host failure 1")
+        expect(attempts).toBe(1)
+        expect(await state.storage.getAlarm()).not.toBeNull()
+        await expect(instance.alarm()).rejects.toThrow("transient host failure 2")
+        expect(attempts).toBe(2)
+        expect(await state.storage.getAlarm()).not.toBeNull()
+        await state.storage.deleteAlarm()
+      } finally {
+        Object.defineProperty(runtime, "env", { configurable: true, value: originalEnv })
+      }
+    }
+    )
+  } finally {
+    await evictDurableObject(stub)
+  }
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
 test("thread initialization blocks registration and survives Durable Object eviction", async () => {
   const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "initialization"]))
   const previous = mountedActor!.supervisor

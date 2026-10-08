@@ -8,231 +8,174 @@
   <a href="https://discord.gg/Z74jwRxz4k"><img alt="Join Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&amp;logoColor=white"></a>
 </p>
 
+> [!WARNING]
+> Tardigrade is under active development. APIs may change.
+
 # Tardigrade
 
-Tardigrade is a typescript framework for building modular agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and draws inspiration from [React](https://react.dev/)'s declarative approach to UI and [Elm](https://elm-lang.org/)'s explicit state transitions.
+Tardigrade is a typescript framework for building composable agents around an immutable event log. It is built on [Effect TS](https://effect.website/) and takes a functional approach to managing agent state and effects, drawing inspiration from [Elm](https://elm-lang.org/), and [Jotai](https://jotai.org/).
 
-### A declarative way to author behavior
-Building an agent can be challenging, especially as they operate over longer horizons. As tasks get harder, the harnesses we build around our agents get ever more complex.
-
-Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses. We took inspiration from UI frameworks.
-
-React derives UI from state, while Elm makes state transitions explicit functions. Tardigrade applies the same idea to agent harnesses. An agent is a component tree over an immutable event log, and each component derives a view and enabled transitions as a pure function of the log.
-
-<p align="center"><code>{ view, transitions } = f(event log)</code></p>
-
-## Why Tardigrade
-
-- **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent components.
-- **Strongly typed, built on Effect.** Typed services and Layers make each component's dependencies explicit. A missing service fails during compile.
-- **Crash proof.** A durable host derives unfinished work from the stored log.
-- **Serverless.** All you need is a durable store, no process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
-- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint. Copy a thread's rows onto a new root with `tdg thread fork` or `host.forkThread`.
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/event-log-equation-dark.svg"><img src="assets/event-log-equation.svg" alt="{ view, effects } = f(event log)" width="240" height="34"></picture></p>
 
 ## Quickstart
 
-Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later. If you are using a coding agent, the [Tardigrade skill](skills/tardigrade/SKILL.md) can help.
+If you use the legacy component API, see the [migration guide](docs/migration/state-initialisation.mdx) for moving existing state to atoms.
 
-If you have an existing agent application, follow the [migration guide](docs/how-to/migrate.md) to move its harness, history, API, client, and deployment configuration.
-
-```bash
-bun add -g tardie@latest
-tdg init tardie-agent --template quickstart
-cd tardie-agent
-bun run dev
+```sh
+bunx tardie init meeseeks --template quickstart
 ```
 
-`tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/references/cli.mdx) covers non-interactive setup, more providers, and deployment.
+For coding agents, use the [Tardigrade skill](https://github.com/clavia-labs/tardigrade/blob/main/skills/tardigrade/SKILL.md).
 
-The generated actor uses a sample weather tool. To build a research agent, use the live paper search tool in the composition below.
+### Atoms hold state
 
-From another shell, discover the actor's methods, allocate a root thread, and send it a message:
-
-```bash
-tdg methods
-tdg thread create --name quickstart
-tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
-```
-
-The API listens at [localhost:4242](http://localhost:4242) by default. View the interactive API reference at [localhost:4242/docs](http://localhost:4242/docs).
-
-<img alt="An actor serving API requests from its generated Bun development server" src="docs/assets/dev-server.png">
-
-## Examples
-
-- [Quickstart](examples/quickstart/actor.ts): a small actor with one typed tool.
-- [RLM](examples/rlm/actor.ts): code execution, fetching, and subagents.
-- [React RLM chat](examples/react-rlm-chat/README.md): a deployable RLM server and React chat.
-
-## Deploy
-
-Deploy the generated Worker with either platform CLI:
-
-Cloudflare:
-
-```bash
-bunx wrangler deploy
-```
-
-Celld:
-
-```bash
-celld deploy --config celld.jsonc
-```
-
-See the [Cloudflare](platform/cloudflare/README.md) and [Celld](docs/platforms/celld.mdx) guides for platform configuration and secrets.
-
-## Build your own harness
-
-```bash
+```sh
 bun add tardie
 ```
 
-You can use `npm install tardie` instead. Install `tardie@next` to test a release candidate.
+Use atoms to store values for other atoms to use.
 
-### Create a component
+```ts
+import { atom } from "tardie/core"
 
-The [`ComponentDefinition` interface](packages/core/src/component/machine.ts#L40) defines `initial`, `step`, and `output`. `tool` is a helper that creates a component from a tool specification and an Effect handler:
+const role = atom("You are a research assistant.")
+const style = atom("Cite your sources and keep answers concise.")
+```
+
+Derive values from atoms using `get`.
+
+```ts
+const system = atom(get => `${get(role)}\n${get(style)}`)
+```
+
+### Durable atoms reduce state from event log
+
+Durable atoms reduce an immutable event log into state.
+
+```ts
+import { Schema } from "effect"
+import { durableAtom } from "tardie/core"
+import { Event, TrajectoryState, trajectoryState } from "tardie/agent"
+
+const history = durableAtom({
+  name: "researcher.history",
+  input: Event,
+  schema: TrajectoryState,
+  initial: { entries: [], models: [] },
+  reduce: trajectoryState,
+})
+
+const messages = atom(get => get(history).entries.map(entry => entry.message))
+```
+
+### Effect atoms propose actions
+
+Effect atoms derive views and propose actions.
+
+Simplified [`compact`](packages/agent/src/atoms/compact.ts):
+
+```ts
+const compact = messages => effectAtom(get => {
+  const history = get(messages)
+  const state = get(compactionState)
+  const context = prepareMessages(history, state)
+  const shouldSummarize = !state.pending && exceedsThreshold(context)
+
+  return {
+    view: { messages: context, compacting: Boolean(state.pending) },
+    events: {},
+    acts: shouldSummarize ? { summarize: summarizeRequest(context, state) } : {},
+  }
+})
+```
+
+Recorded results update durable compaction state.
+
+### It's atoms all the way
+
+Compose the atoms into an agent actor.
 
 ```ts
 import { Effect } from "effect"
-import { tool } from "tardie/agent"
+import { atom, defineActor } from "tardie/core"
+import { workspace, fetch } from "tardie/libraries"
+import { agentMethods, codeMode, compact, infer, messages } from "tardie/agent"
 
-const papers = tool({
-  spec: {
-    name: "search_papers",
-    description: "Search OpenAlex for paper titles, years, and links",
-    inputSchema: {
-      type: "object",
-      properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 5 } },
-      required: ["query", "limit"],
-      additionalProperties: false
-    }
-  },
-  run: (input) => Effect.promise(async () => {
-    const { query, limit } = input as { query: string; limit: number }
-    try {
-      const response = await globalThis.fetch(`https://api.openalex.org/works?search=${encodeURIComponent(query)}&per_page=${limit}&select=id,display_name,publication_year`)
-      if (!response.ok) return { error: `OpenAlex returned ${response.status}` }
-      const data = await response.json() as { results: unknown[] }
-      return data.results
-    } catch (error) {
-      return { error: String(error) }
-    }
+const researcher = defineActor("researcher", Effect.gen(function* () {
+  const system = atom("You are a careful research assistant.")
+  const tools = yield* codeMode([workspace(), fetch()])
+  const context = yield* compact(messages, {
+    triggerRatio: 0.8,
+    retainRatio: 0.5,
   })
-})
+  const agent = yield* infer(get => ({
+    system: get(system),
+    tools: get(tools),
+    context: get(context),
+  }))
+
+  return { atom: agent, methods: agentMethods }
+}))
 ```
-
-An offered tool follows this lifecycle:
-
-1. The component adds `search_papers` to the agent's composed view.
-2. `infer` includes its specification in the model request.
-3. The model calls it. Tardigrade records `ToolCalled`.
-4. Tardigrade runs the attached handler and records `ToolReturned`.
-5. `infer` includes the result in the next model request.
-
-### Compose an agent
-
-Mount the component beside the built-in parts that this task needs:
-
-```ts
-import { actor } from "tardie/core"
-import { agentMethods, agents, budget, compact, messages, infer, outputValidateOnce, system, tools } from "tardie/agent"
-import { fetch, workspace } from "tardie/code"
-
-const researcher = actor({
-  name: "researcher",
-  methods: agentMethods,
-  components: [infer([
-    system("You are a research assistant. Investigate the question and cite your sources."),
-    papers,
-    compact(messages(), { triggerRatio: 0.8, retainRatio: 0.5 }),
-    budget(tools([ // or codeMode([...])
-      fetch(),
-      agents(),
-      workspace()
-    ]), {
-      limit: 12,
-      usage: ({ calls }) => calls.length,
-      onExhausted: (reason, settle) => settle({ error: reason })
-    }),
-    outputValidateOnce
-  ])]
-})
-```
-
-- `actor` names the agent and exposes its methods. `infer` runs its components with the host's model policy.
-
-- `compact(messages())` summarizes at the chosen `triggerRatio` and keeps the chosen `retainRatio` of recent context.
-
-- `budget(...)` counts tool calls in its subtree and runs `onExhausted` when the limit is reached.
-
-This agent can search papers, fetch sources, delegate research, and store notes. Change the package list to create another harness.
-
-A run can follow this path:
 
 ```text
-MessageReceived -> search_papers -> fetch_get -> TurnCompleted
+event log -> history -> messages -> compact --+
+                                              |
+                                    system ---+-> infer -> researcher
+                                              |
+                                     tools ---+
 ```
 
-Each action and result becomes an event that every component can interpret.
+## Hosting
 
-### Run the composition
-
-<details>
-<summary>Bind a model and durable SQLite host</summary>
-
-The three code blocks form one program. Run it in a project configured by `tdg init` or `tdg setup`, with the provider credentials available in the environment. The model services select the provider implementation from the configured protocol.
+Host each actor instance with an ActorDO for its supervisor directory and a separate SQLite-backed ThreadDO for each thread on Cloudflare or a self-hosted [Celld fleet](https://github.com/denoland/celld/blob/main/docs/README.md). The same Worker entrypoint runs on both.
 
 ```ts
-import { createBunHost } from "tardie/bun"
-import { bunModelServices } from "tardie/server/model-services"
+import { actorContext } from "tardie/agent"
+import { createActorWorker } from "tardie/platform/cloudflare"
+import { researcher } from "./actor"
+import { services } from "./services"
 
-const { layers } = await bunModelServices({
-  env: process.env
-})
-
-const host = await createBunHost({
+const worker = createActorWorker({
   actor: researcher,
-  storage: ".tardigrade",
-  layersFor: () => layers
+  actorContext,
+  services: () => services(),
 })
-
-try {
-  const thread = await host.allocateRootThread({ instance: "researcher", name: "main" })
-  const result = await thread.methods.message(
-    { text: "Research durable agent architectures and compare their tradeoffs. Cite sources." },
-    { key: "architecture-research" }
-  )
-  console.log(result)
-} finally {
-  await host.close()
-}
+export const ActorDO = worker.ActorObject
+export const ThreadDO = worker.ThreadObject
+export default worker
 ```
 
-`bunModelServices` reads the model policy from `wrangler.jsonc` and binds inference and platform services. `createBunHost` stores actor instances under `storage`. The method call returns the completed result; retries with the same key return the same invocation. Use a new key for each new request.
+`createActorWorker` routes requests and provides the ActorDO and ThreadDO classes.
 
-</details>
+ActorDO allocates and routes to threads; each ThreadDO owns a separate database with its state and journal. Each thread records its parent, through which we derive the logical lineage, here A -> B -> C.
 
-## How durability works
+```text
+ActorWorker -> ActorDO [supervisor DB]
+               └── directory
+                   ├── A [ThreadDO, thread DB]
+                   ├── B [ThreadDO, thread DB, parent: A]
+                   └── C [ThreadDO, thread DB, parent: B]
+```
 
-Every message, model action, tool result, and checkpoint lands in the log. Component machines consume those events and derive keyed transitions from their current state.
+The [Quickstart](docs/getting-started/quickstart.mdx) generates services and deployment configs with both DO bindings. Configure your model and credentials, then run or deploy.
 
-<p align="center"><code>Sₙ₊₁ = step(Sₙ, eₙ₊₁)</code></p>
+Run locally with `bunx wrangler dev`; see [local setup](docs/platforms/cloudflare.mdx#verify-locally).
 
-The host runs transitions with unrecorded keys. It appends their events and repeats until the agent rests.
+[Cloudflare](https://developers.cloudflare.com/workers/wrangler/commands/#deploy):
 
-If the process stops during `search_papers`, the log still contains its unanswered `ToolCalled`. `host.recover()` replays the log through the component machines, derives the same key and input, then runs the handler again. Live execution only steps the machines with newly appended events.
+```sh
+bunx wrangler deploy
+```
 
-External effects have at-least-once execution. Each keyed result is recorded once. Providers can use the transition key as an idempotency key.
+Or deploy to a Celld fleet, using its storage bucket:
 
-## Learn more
+```sh
+celld deploy --config celld.jsonc --bucket s3://actors
+```
 
-- [Quickstart](docs/getting-started/quickstart.mdx): build and deploy a Tardigrade actor.
-- [HTTP server](docs/how-to/server.md)
-- [CLI](docs/references/cli.mdx)
-- [Why Tardigrade](docs/start-here/Why.mdx): learn what the log-as-state model makes possible.
+See the [Cloudflare](docs/platforms/cloudflare.mdx) and [Celld](docs/platforms/celld.mdx) guides for configuration and credentials. For a Bun process, see the [Bun example](packages/examples/bun.ts) and [service wiring](packages/examples/services.ts).
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and run `bun run gate` before finishing a change.
+See [CONTRIBUTING.md](CONTRIBUTING.md).

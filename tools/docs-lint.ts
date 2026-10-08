@@ -13,15 +13,14 @@ import { join } from "node:path"
 
 const root = join(import.meta.dir, "..")
 
-// Every Markdown and MDX page under docs/ is found rather than listed, so a nested page cannot escape the check.
-const pages = [...new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: join(root, "docs"), onlyFiles: true })]
+const pages = ["docs", "notes"].flatMap(directory => [...new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: join(root, directory), onlyFiles: true })].map(name => `${directory}/${name}`))
 const files = [
   "README.md",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
   ".github/PULL_REQUEST_TEMPLATE.md",
-  ...pages.map((name) => `docs/${name}`).sort()
+  ...pages.sort()
 ]
 
 interface Problem {
@@ -58,7 +57,7 @@ const NOT_BUT = /\bnot\s+[^.,;:]{1,60},\s*but\b/i
 
 // Text that names a rule or a symbol rather than using it. A document is allowed to quote the
 // phrasing it forbids, so quoted spans and inline code drop out before the prose rules run.
-const used = (line: string) => line.replace(/`[^`]*`/g, "").replace(/"[^"]*"/g, "")
+const used = (line: string) => line.replace(/\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/`[^`]*`/g, "").replace(/"[^"]*"/g, "")
 
 const check = (file: string, text: string): ReadonlyArray<Problem> => {
   const problems: Array<Problem> = []

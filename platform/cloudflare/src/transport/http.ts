@@ -1,18 +1,20 @@
+import { cloudflareRetryPolicy, makeRetryingRpc } from "../retry"
+import { actorObjectNameOf, threadObjectNameOf } from "./directory"
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
-import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
-import type { ModelPolicy } from "@clavia/tardigrade-agent"
+import { ForkRequest, forkCheckpointOf, UnknownThread, type TreeBounds } from "@clavia/tardigrade-deprecated-client/contract"
+import type { ActorMethods } from "@clavia/tardigrade-deprecated-core/actor/method"
+import type { ModelPolicy } from "@clavia/tardigrade-deprecated-agent"
 import type { ModelListingState } from "@clavia/tardigrade-model/catalog/schema"
 import type { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog/availability"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
+import type { Event } from "@clavia/tardigrade-deprecated-core/log/event"
+import { ActorInstanceId } from "@clavia/tardigrade-deprecated-core/transport/endpoint"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-http/methods"
-import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-http/models"
-import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
-import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-http/docs"
-import { streamCursorOf } from "@clavia/tardigrade-http/sse"
+import { MethodApi, MethodRuntime, layerMethodHandlers } from "@clavia/tardigrade-deprecated-http/methods"
+import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tardigrade-deprecated-http/models"
+import { layerRequestProblems } from "@clavia/tardigrade-deprecated-http/contract"
+import { layerApiDocs, UNAUTHENTICATED_PATHS } from "@clavia/tardigrade-deprecated-http/docs"
+import { streamCursorOf } from "@clavia/tardigrade-deprecated-http/sse"
 import { WorkerApi, workerRoutes } from "./contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
@@ -47,7 +49,7 @@ interface CloudflareHttpOptions {
   readonly directory: CloudflareDirectory
 }
 
-// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/host/src/fork.ts, ForkRefusal).
+// FORK_REFUSAL_STATUS maps a fork refusal to its HTTP status (packages/deprecated/host/src/fork.ts, ForkRefusal).
 const FORK_REFUSAL_STATUS = { "unknown-source": 404, checkpoint: 400, occupied: 409 } as const
 
 // cloudflareHttp adapts HTTP requests to the mounted host's methods and directory.
@@ -189,14 +191,16 @@ export const cloudflareHttp = ({
         if (stub === undefined) return json({ error: "unknown actor" }, 404)
         const selected = treeBoundsOf(request)
         if ("error" in selected) return json({ error: selected.error }, 400)
-        const tree = yield* Effect.promise(() => stub.threadTree(selected.bounds))
+        const tree = yield* makeRetryingRpc({ retry: cloudflareRetryPolicy(env.TARDIGRADE_CONFIG) }).call(env.ACTORS, actorObjectNameOf(actorName(), instance), "threadTree", fresh => fresh.threadTree(selected.bounds), true).pipe(Effect.orDie)
         if (tree === undefined) return json({ error: "unknown thread" }, 404)
         const flatten = (nodes: ReadonlyArray<ActorThreadNode>): ReadonlyArray<ActorThreadNode> =>
           nodes.flatMap((node) => [node, ...flatten(node.children)])
-        const summaries = yield* Effect.forEach(flatten(tree), (node) => Effect.promise(async () => {
-          const target = await threadStub(env, actorName(), instance, node.id)
+        const summaries = yield* Effect.forEach(flatten(tree), (node) => Effect.gen(function* () {
+          const target = yield* Effect.promise(() => threadStub(env, actorName(), instance, node.id))
           if (target === undefined) throw new Error("registered thread is missing its Durable Object")
-          return target.stub.summary()
+          return yield* makeRetryingRpc({ retry: cloudflareRetryPolicy(env.TARDIGRADE_CONFIG) }).call(
+            env.THREADS, threadObjectNameOf(actorName(), instance, target.thread), "summary", fresh => fresh.summary(), true
+          ).pipe(Effect.orDie)
         }))
         return json(summaries)
       })
@@ -234,11 +238,10 @@ export const cloudflareHttp = ({
         if (!Number.isSafeInteger(after) || after < 0) return json({ error: "after must be a non-negative integer" }, 400)
         if (!Number.isSafeInteger(limit) || limit < 0) return json({ error: "limit must be a non-negative integer" }, 400)
         const types = url.searchParams.get("types")?.split(",").map((type) => type.trim()).filter((type) => type.length > 0)
-        return yield* Effect.tryPromise({
-          try: () => stub.stub.queryEvents(stub.thread, { after, limit, ...(types === undefined ? {} : { types }) }),
-          catch: (cause) => cause instanceof Error ? cause.message : String(cause)
-        }).pipe(Effect.match({
-          onFailure: (error) => json({ error }, 500),
+        return yield* makeRetryingRpc({ retry: cloudflareRetryPolicy(env.TARDIGRADE_CONFIG) }).call(
+          env.THREADS, threadObjectNameOf(actor, instance, stub.thread), "queryEvents", fresh => fresh.queryEvents(stub.thread, { after, limit, ...(types === undefined ? {} : { types }) }), true
+        ).pipe(Effect.match({
+          onFailure: (error) => json({ error: error.message }, 500),
           onSuccess: (rows) => json(rows)
         }))
       })
@@ -270,9 +273,12 @@ export const cloudflareHttp = ({
           if ((yield* Effect.promise(() => actorStub(env, actor, instance, false))) === undefined) return undefined
           return {
             methods,
-            events: (thread) => Effect.promise(async () => {
-              const target = await threadStub(env, actor, instance, thread)
-              return target === undefined ? [] : await target.stub.events(target.thread) as ReadonlyArray<Event>
+            events: (thread) => Effect.gen(function* () {
+              const target = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+              if (target === undefined) return []
+              return yield* makeRetryingRpc({ retry: cloudflareRetryPolicy(env.TARDIGRADE_CONFIG) }).call(
+                env.THREADS, threadObjectNameOf(actor, instance, target.thread), "events", async fresh => await fresh.events(target.thread) as ReadonlyArray<Event>, true
+              ).pipe(Effect.orDie)
             }),
             append: (thread, event) => Effect.gen(function* () {
               const target = yield* Effect.promise(() => threadStub(env, actor, instance, thread))

@@ -16,7 +16,7 @@ coverage/
 .wrangler/
 .eslintcache
 .oxlintcache
-packages/core/tla/states/
+packages/deprecated/core/tla/states/
 
 # Local files
 .DS_Store
@@ -40,3 +40,6 @@ examples/.data/
 .claude/*
 !.claude/skills/
 .obsidian/
+
+# Workspace public facade, generated from tools/public-exports.json on install
+packages/tardie/src/generated/
