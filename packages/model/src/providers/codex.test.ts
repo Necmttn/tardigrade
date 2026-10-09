@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { Console, Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { createProviderLayer, providerLayer } from "./codex"
+import { createProviderLayer, listModels, providerLayer } from "./codex"
 import { providerLayer as loadProvider } from "./layer"
 import { credentialsFromAccessToken } from "./codex-auth"
 import { providerEvents, reasoning } from "../testing/fixtures"
@@ -152,4 +152,25 @@ test("Codex complete streams support structured output", async () => {
     Effect.provide(providerLayer(options)), Effect.provideService(HttpClient.HttpClient, http)
   ))
   expect(result.value).toEqual({ greeting: "Hello" })
+})
+
+test("Codex model discovery uses account credentials and a configurable client version", async () => {
+  const http = HttpClient.make((request, url) => Effect.sync(() => {
+    expect(url.toString()).toBe("https://fixture.invalid/codex/models?client_version=0.162.0")
+    expect(request.headers.authorization).toBe("Bearer rotated-token")
+    expect(request.headers["chatgpt-account-id"]).toBe("account")
+    return HttpClientResponse.fromWeb(request, Response.json({ models: [
+      { slug: "available-model", visibility: "list" }, { slug: "hidden-model", visibility: "hide" }
+    ] }))
+  }))
+  const models = await Effect.runPromise(listModels(auth, { baseUrl: "https://fixture.invalid/codex", clientVersion: "0.162.0" }).pipe(
+    Effect.provideService(HttpClient.HttpClient, http)
+  ))
+  expect(models.map(model => model.slug)).toEqual(["available-model", "hidden-model"])
+})
+
+test("Codex model discovery respects its timeout override", async () => {
+  const http = HttpClient.make(() => Effect.never)
+  const result = await Effect.runPromise(listModels(auth, { requestMs: 1 }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.result))
+  expect(result._tag).toBe("Failure")
 })

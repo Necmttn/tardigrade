@@ -8,6 +8,25 @@ import { credentialsFromAccessToken, type CodexCredentials } from "./codex-auth"
 
 export const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api/codex"
 export const DEFAULT_OUTPUT_LIMIT = "warn" as const
+export const MODEL_LIST_DEFAULTS = { baseUrl: DEFAULT_BASE_URL, clientVersion: "0.162.0", requestMs: 30_000 }
+const modelsSchema = Schema.Struct({ models: Schema.Array(Schema.Struct({ slug: Schema.NonEmptyString, visibility: Schema.optional(Schema.String) })) })
+
+// listModels reads account-specific model names without selecting a default (codex.test.ts).
+export const listModels = (auth: CodexCredentials["Service"], overrides: Partial<typeof MODEL_LIST_DEFAULTS> = {}) => {
+  const options = { ...MODEL_LIST_DEFAULTS, ...overrides }
+  return Effect.gen(function* () {
+    const credentials = yield* auth.credentials
+    const http = yield* HttpClient.HttpClient
+    const response = yield* http.execute(HttpClientRequest.get(`${options.baseUrl}/models`).pipe(
+      HttpClientRequest.setUrlParam("client_version", options.clientVersion),
+      HttpClientRequest.setHeaders({ authorization: `Bearer ${credentials.accessToken}`, "chatgpt-account-id": credentials.accountId, originator: "codex_cli_rs" })
+    ))
+    if (response.status < 200 || response.status >= 300) return yield* unknownModelError(`Codex model discovery returns HTTP ${response.status}`)
+    const body = yield* response.json
+    return (yield* Schema.decodeUnknownEffect(modelsSchema)(body)).models
+  }).pipe(Effect.timeout(options.requestMs), Effect.mapError(unknownModelError))
+}
+
 export interface CodexOptions {
   readonly outputLimit?: "warn" | "reject"
 }
