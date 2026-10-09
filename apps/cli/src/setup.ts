@@ -58,6 +58,11 @@ export interface Preset {
 }
 
 const PRESET_DETAILS: Readonly<Record<string, Omit<Preset, "title" | "provider" | "protocol" | "baseUrl">>> = {
+  codex: {
+    description: "Codex Responses with a ChatGPT access token; device login and renewal are host-owned",
+    modelExample: "gpt-5.2-codex",
+    credential: "Codex access token"
+  },
   openai: {
     description: "OpenAI's Responses API",
     modelExample: "gpt-5.2",

@@ -32,8 +32,7 @@
       "entry": [
         "tools/*.ts",
         "tools/**/*.test.ts",
-        "examples/*/*.ts",
-        "examples/codex-proxy/celld/worker.ts"
+        "examples/*/*.ts"
       ],
       "project": [
         "tools/**/*.ts",
