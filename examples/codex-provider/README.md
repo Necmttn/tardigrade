@@ -17,6 +17,8 @@ CODEX_MODEL=<available-model-id> bun main.ts ask "Say hello."
 
 `login` saves tokens to `.codex-credentials.json` with mode `0600`. `CODEX_CREDENTIALS_FILE` overrides the path. `ask` reads that file and saves rotated tokens after renewal. Keep the file private. A failed write can leave a `.tmp` file; remove that file before repeating login.
 
+For a research actor with code execution, workspace files, and delegated agents, use the [Codex chat instructions](../react-rlm-chat/README.md#run-with-codex-on-bun).
+
 ## Integrate
 
 ```ts
