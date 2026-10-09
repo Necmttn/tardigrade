@@ -9,7 +9,7 @@ import { credentialsFromAccessToken, type CodexCredentials } from "./codex-auth"
 export const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api/codex"
 export const DEFAULT_OUTPUT_LIMIT = "warn" as const
 export const MODEL_LIST_DEFAULTS = { baseUrl: DEFAULT_BASE_URL, clientVersion: "0.162.0", requestMs: 30_000 }
-const modelsSchema = Schema.Struct({ models: Schema.Array(Schema.Struct({ slug: Schema.NonEmptyString, visibility: Schema.optional(Schema.String) })) })
+const modelsSchema = Schema.Struct({ models: Schema.Array(Schema.Struct({ slug: Schema.NonEmptyString, visibility: Schema.optional(Schema.String), context_window: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))) })) })
 
 // listModels reads account-specific model names without selecting a default (codex.test.ts).
 export const listModels = (auth: CodexCredentials["Service"], overrides: Partial<typeof MODEL_LIST_DEFAULTS> = {}) => {
