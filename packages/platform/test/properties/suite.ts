@@ -1,6 +1,7 @@
 import { stateValidation } from "./runtime/state-validation"
 import { snapshotLookups } from "./runtime/snapshot-lookups"
 import { checkpointChunks } from "./runtime/checkpoint-chunks"
+import { atomCheckpoint } from "./runtime/atom-checkpoint"
 import { referenceCoordinates } from "./runtime/reference-coordinates"
 import { inputCanonicalization, inputRepresentation } from "./runtime/input-representation"
 import { promiseDeadline } from "./runtime/promise-deadline"
@@ -10,6 +11,7 @@ import { promiseSettlementOrder } from "./runtime/promise-settlement-order"
 import { referenceAcceptanceAtomicity } from "./runtime/reference-acceptance-atomicity"
 import { ownedProducerRecovery, externalProducerObservation } from "./runtime/deferred-recovery"
 import { settledEffect, settledEffectExamples } from "./runtime/settled-effect"
+import { inlineExecutionSupervision } from "./runtime/inline-execution"
 
 import { cancellationTerminality, cancellationForwarding, cancellationBatchIsolation } from "./runtime/cancellation"
 
@@ -22,6 +24,7 @@ export const propertyCases = {
   stateValidation,
   snapshotLookups: () => fc.assert(snapshotLookups, RUNTIME_PROPERTY_OPTIONS),
   checkpointChunks: () => fc.assert(checkpointChunks, RUNTIME_PROPERTY_OPTIONS),
+  atomCheckpoint: () => fc.assert(atomCheckpoint, RUNTIME_PROPERTY_OPTIONS),
   referenceCoordinates: () => fc.assert(referenceCoordinates, RUNTIME_PROPERTY_OPTIONS),
   inputCanonicalization,
   inputRepresentation: () => fc.assert(inputRepresentation, RUNTIME_PROPERTY_OPTIONS),
@@ -39,5 +42,6 @@ export const propertyCases = {
   ownedProducerRecovery: () => fc.assert(ownedProducerRecovery, RUNTIME_PROPERTY_OPTIONS),
   externalProducerObservation: () => fc.assert(externalProducerObservation, RUNTIME_PROPERTY_OPTIONS),
   settledEffect: () => fc.assert(settledEffect, { ...RUNTIME_PROPERTY_OPTIONS, examples: settledEffectExamples }),
+  inlineExecutionSupervision: () => fc.assert(inlineExecutionSupervision, RUNTIME_PROPERTY_OPTIONS),
   toolDeferredLifecycle: () => fc.assert(toolDeferredLifecycle, RUNTIME_PROPERTY_OPTIONS),
 }
