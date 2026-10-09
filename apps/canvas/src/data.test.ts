@@ -107,3 +107,43 @@ describe("server boundary", () => {
     expect(() => parseEvents([{ event: null }])).toThrow()
   })
 })
+
+test("conversation reads user content and final output without model internals", () => {
+  const events = parseEvents([
+    { seq: 1, event: { type: "MessageReceived", text: "Legacy message" } },
+    {
+      seq: 2,
+      event: {
+        type: "MessageReceived",
+        content: [
+          { type: "text", text: "Hello" },
+          { type: "file", url: "secret-url" }
+        ]
+      }
+    },
+    {
+      seq: 3,
+      event: {
+        type: "TurnCompleted",
+        output: "Answer",
+        request: { headers: { authorization: "secret-token" } }
+      }
+    },
+    {
+      seq: 4,
+      event: {
+        type: "ModelReturned",
+        reasoning: "private",
+        continuation: { text: "private" }
+      }
+    }
+  ])
+  expect(events.map((event) => event.message)).toEqual([
+    { role: "user", text: "Legacy message" },
+    { role: "user", text: "Hello\n[Attachment]" },
+    { role: "assistant", text: "Answer" },
+    undefined
+  ])
+  expect(JSON.stringify(events)).not.toContain("secret")
+  expect(JSON.stringify(events)).not.toContain("private")
+})

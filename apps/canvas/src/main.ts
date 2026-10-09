@@ -26,6 +26,7 @@ export const Model = Schema.Struct({
   threads: Schema.Array(Thread),
   events: Schema.Array(Event),
   selected: Schema.String,
+  inspectorTab: Schema.Literals(["conversation", "events"]),
   query: Schema.String,
   jumpError: Schema.String,
   filter: Schema.String,
@@ -49,6 +50,8 @@ export type Model = typeof Model.Type
 export const Message = defineMessageUnion({
   Source: { source: Schema.Literals(["demo", "live"]) },
   Select: { id: Schema.String },
+  InspectorTab: { tab: Schema.Literals(["conversation", "events"]) },
+  CloseThread: {},
   Search: { query: Schema.String },
   Filter: { status: Schema.String },
   ClearFilters: {},
@@ -140,6 +143,7 @@ export const initialModel: Model = {
   threads: demoThreads(DEFAULTS.demoThreads),
   events: [],
   selected: "",
+  inspectorTab: "conversation",
   query: "",
   jumpError: "",
   filter: "all",
@@ -200,11 +204,24 @@ export function update(
         commands: next.source === "live" ? [fleet(next)] : []
       }
     }
+    case "InspectorTab":
+      return { model: { ...model, inspectorTab: message.tab } }
+    case "CloseThread":
+      return {
+        model: {
+          ...model,
+          selected: "",
+          events: [],
+          eventLoading: false,
+          eventError: ""
+        }
+      }
     case "Select": {
       const thread = model.threads.find((t) => t.id === message.id)
-      const next = {
+      const next: Model = {
         ...model,
         selected: message.id,
+        inspectorTab: "conversation",
         events: thread && model.source === "demo" ? demoEvents(thread) : [],
         eventError: "",
         eventLoading: model.source === "live"

@@ -615,13 +615,19 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                   ]
                 ),
                 h.aside(
-                  [cls("inspector")],
+                  [cls(`inspector ${selected ? "open" : ""}`)],
                   [
                     div(
                       [cls("inspector-heading")],
                       [
                         text("THREAD INSPECTOR", "eyebrow"),
-                        text(selected ? "01" : "00", "mono muted")
+                        selected
+                          ? action(
+                              "Close thread",
+                              Message.CloseThread(),
+                              "quiet"
+                            )
+                          : text("00", "mono muted")
                       ]
                     ),
                     ...(selected
@@ -682,9 +688,127 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                               ]
                             : []),
                           div(
+                            [
+                              cls("inspector-tabs"),
+                              h.Role("group"),
+                              h.AriaLabel("Thread view")
+                            ],
+                            [
+                              button(
+                                [
+                                  h.OnClick(
+                                    Message.InspectorTab({
+                                      tab: "conversation"
+                                    })
+                                  ),
+                                  h.AriaPressed(
+                                    String(
+                                      model.inspectorTab === "conversation"
+                                    )
+                                  )
+                                ],
+                                ["Conversation"]
+                              ),
+                              button(
+                                [
+                                  h.OnClick(
+                                    Message.InspectorTab({ tab: "events" })
+                                  ),
+                                  h.AriaPressed(
+                                    String(model.inspectorTab === "events")
+                                  )
+                                ],
+                                ["Events"]
+                              )
+                            ]
+                          ),
+                          ...(model.inspectorTab === "conversation"
+                            ? [
+                                div(
+                                  [cls("conversation")],
+                                  [
+                                    ...model.events.flatMap((event) =>
+                                      event.message
+                                        ? [
+                                            h.article(
+                                              [
+                                                cls(
+                                                  `message ${event.message.role}`
+                                                )
+                                              ],
+                                              [
+                                                text(
+                                                  event.message.role === "user"
+                                                    ? "USER"
+                                                    : "ASSISTANT",
+                                                  "eyebrow"
+                                                ),
+                                                p([], [event.message.text])
+                                              ]
+                                            )
+                                          ]
+                                        : []
+                                    ),
+                                    ...(!model.eventLoading &&
+                                    !model.events.some((event) => event.message)
+                                      ? [
+                                          p(
+                                            [cls("conversation-empty")],
+                                            [
+                                              "No conversation messages in the loaded events."
+                                            ]
+                                          )
+                                        ]
+                                      : []),
+                                    ...(selected.status === "running" ||
+                                    selected.status === "waiting"
+                                      ? [
+                                          p(
+                                            [cls("conversation-empty")],
+                                            [
+                                              selected.status === "running"
+                                                ? "This thread is running."
+                                                : "This thread is waiting."
+                                            ]
+                                          )
+                                        ]
+                                      : []),
+                                    ...(selected.status === "failed"
+                                      ? [
+                                          p(
+                                            [cls("error")],
+                                            [
+                                              "This thread failed. Select Events to inspect its activity."
+                                            ]
+                                          )
+                                        ]
+                                      : []),
+                                    ...graph.nodes
+                                      .filter(
+                                        (node) => node.parent === selected.id
+                                      )
+                                      .map((child) =>
+                                        action(
+                                          `Open child: ${child.name}`,
+                                          focus(child.id),
+                                          "child-thread-link"
+                                        )
+                                      )
+                                  ]
+                                )
+                              ]
+                            : []),
+                          div(
                             [cls("timeline-heading")],
                             [
-                              strong([], ["Event sequence"]),
+                              strong(
+                                [],
+                                [
+                                  model.inspectorTab === "events"
+                                    ? "Event sequence"
+                                    : "Conversation"
+                                ]
+                              ),
                               text(String(model.events.length), "mono muted")
                             ]
                           ),
@@ -712,49 +836,56 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                                 )
                               ]
                             : []),
-                          div(
-                            [cls("timeline")],
-                            model.events.map((event, i) =>
-                              div(
-                                [
-                                  cls(
-                                    `event ${event.tag.includes("Failed") ? "event-failed" : ""}`
+                          ...(model.inspectorTab === "events"
+                            ? [
+                                div(
+                                  [cls("timeline")],
+                                  model.events.map((event, i) =>
+                                    div(
+                                      [
+                                        cls(
+                                          `event ${event.tag.includes("Failed") ? "event-failed" : ""}`
+                                        )
+                                      ],
+                                      [
+                                        div(
+                                          [cls("event-track")],
+                                          [text("", "event-dot")]
+                                        ),
+                                        div(
+                                          [cls("event-body")],
+                                          [
+                                            div(
+                                              [cls("event-title")],
+                                              [
+                                                strong([], [event.tag]),
+                                                text(
+                                                  `#${event.seq}`,
+                                                  "mono muted"
+                                                )
+                                              ]
+                                            ),
+                                            ...(event.detail
+                                              ? [p([], [event.detail])]
+                                              : []),
+                                            text(
+                                              model.source === "demo"
+                                                ? `+${(event.at / 1000).toFixed(2)}s`
+                                                : event.at
+                                                  ? new Date(
+                                                      event.at
+                                                    ).toLocaleTimeString()
+                                                  : `Sequence ${i + 1}`,
+                                              "mono event-time"
+                                            )
+                                          ]
+                                        )
+                                      ]
+                                    )
                                   )
-                                ],
-                                [
-                                  div(
-                                    [cls("event-track")],
-                                    [text("", "event-dot")]
-                                  ),
-                                  div(
-                                    [cls("event-body")],
-                                    [
-                                      div(
-                                        [cls("event-title")],
-                                        [
-                                          strong([], [event.tag]),
-                                          text(`#${event.seq}`, "mono muted")
-                                        ]
-                                      ),
-                                      ...(event.detail
-                                        ? [p([], [event.detail])]
-                                        : []),
-                                      text(
-                                        model.source === "demo"
-                                          ? `+${(event.at / 1000).toFixed(2)}s`
-                                          : event.at
-                                            ? new Date(
-                                                event.at
-                                              ).toLocaleTimeString()
-                                            : `Sequence ${i + 1}`,
-                                        "mono event-time"
-                                      )
-                                    ]
-                                  )
-                                ]
-                              )
-                            )
-                          ),
+                                )
+                              ]
+                            : []),
                           ...(!model.events.length &&
                           !model.eventLoading &&
                           !model.eventError
@@ -775,7 +906,7 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                               p(
                                 [],
                                 [
-                                  "Select a node to inspect its events and relationships."
+                                  "Click a node to read its conversation. Use Events to inspect its activity."
                                 ]
                               ),
                               div(

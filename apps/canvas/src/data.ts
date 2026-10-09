@@ -29,7 +29,13 @@ export const Event = Schema.Struct({
   seq: Schema.Finite,
   tag: Schema.String,
   at: Schema.Finite,
-  detail: Schema.String
+  detail: Schema.String,
+  message: Schema.optionalKey(
+    Schema.Struct({
+      role: Schema.Literals(["user", "assistant"]),
+      text: Schema.String
+    })
+  )
 })
 export type Event = typeof Event.Type
 const groups = [
@@ -80,7 +86,7 @@ export function demoThreads(count: number): Thread[] {
 export function demoEvents(thread: Thread): Event[] {
   const tags = [
     "ThreadCreated",
-    "InputReceived",
+    "MessageReceived",
     "ModelCalled",
     "ModelReturned",
     "ToolCalled",
@@ -99,6 +105,21 @@ export function demoEvents(thread: Thread): Event[] {
     seq: i + 1,
     tag,
     at: i * 1350,
+    ...(tag === "MessageReceived"
+      ? {
+          message: {
+            role: "user" as const,
+            text: `Review ${thread.group.toLowerCase()}. Work as the ${thread.name.toLowerCase()} and report the result.`
+          }
+        }
+      : tag === "TurnCompleted"
+        ? {
+            message: {
+              role: "assistant" as const,
+              text: `I completed the ${thread.name.toLowerCase()} task for ${thread.group.toLowerCase()}. The source checks pass. The parent thread can use this result.\n\nThis conversation is simulated.`
+            }
+          }
+        : {}),
     detail:
       tag === "ModelCalled"
         ? "Simulated model request"
@@ -156,13 +177,37 @@ export function parseThreads(value: unknown): Thread[] {
   })
 }
 
-// parseEvents keeps payloads and authentication headers outside the view; data.test.ts checks the boundary.
+function conversation(event: Record<string, unknown>): Event["message"] {
+  if (event.type === "MessageReceived") {
+    const parts = Array.isArray(event.content)
+      ? event.content
+          .flatMap((part: unknown) => {
+            if (!part || typeof part !== "object") return []
+            const item = part as Record<string, unknown>
+            return item.type === "text"
+              ? [string(item.text)]
+              : item.type === "file"
+                ? ["[Attachment]"]
+                : []
+          })
+          .join("\n")
+      : string(event.text)
+    return parts ? { role: "user", text: parts } : undefined
+  }
+  if (event.type === "TurnCompleted" && typeof event.output === "string")
+    return { role: "assistant", text: event.output }
+  return undefined
+}
+
+// parseEvents retains conversation text and omits request headers; data.test.ts checks the boundary.
 export function parseEvents(value: unknown): Event[] {
   if (!Array.isArray(value)) throw new Error("Expected an event list")
   return value.map((item: unknown) => {
     const row = record(item)
     const event = record(row.event)
+    const message = conversation(event)
     return {
+      ...(message ? { message } : {}),
       seq: number(row.seq),
       tag: string(event.type, string(event._tag, "Event")),
       at: number(event.at),

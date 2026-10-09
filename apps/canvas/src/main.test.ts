@@ -92,3 +92,27 @@ test("a live jump requests the selected thread events", () => {
   expect(next.model.eventLoading).toBe(true)
   expect(next.commands).toHaveLength(1)
 })
+
+test("node selection opens conversation and closing rejects late events", () => {
+  const selected = update(
+    { ...initialModel, inspectorTab: "events" },
+    Message.Select({ id: "demo-7" })
+  ).model
+  expect(selected.inspectorTab).toBe("conversation")
+  expect(selected.events.some((event) => event.message)).toBe(true)
+  const closed = update(
+    { ...selected, source: "live" },
+    Message.CloseThread()
+  ).model
+  expect(closed.selected).toBe("")
+  expect(
+    update(
+      closed,
+      Message.EventsLoaded({
+        id: "demo-7",
+        generation: closed.generation,
+        events: selected.events
+      })
+    ).model
+  ).toBe(closed)
+})
