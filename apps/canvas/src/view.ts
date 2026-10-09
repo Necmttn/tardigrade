@@ -325,13 +325,19 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                     text("⌕", "search-icon"),
                     h.input([
                       h.Type("search"),
-                      h.Placeholder("Find a thread, role, or workflow…"),
+                      h.Placeholder("Thread ID or name · Enter to jump"),
                       h.AriaLabel("Search threads"),
                       h.Value(model.query),
-                      h.OnInput((query) => Message.Search({ query }))
+                      h.OnInput((query) => Message.Search({ query })),
+                      h.OnKeyDownPreventDefault((key) =>
+                        key === "Enter"
+                          ? Option.some(Message.Jump())
+                          : Option.none()
+                      )
                     ])
                   ]
                 ),
+                action("Jump to thread", Message.Jump(), "filter-reset"),
                 h.select(
                   [
                     cls("filter-reset"),
@@ -358,6 +364,22 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                   : [text("256-thread sample", "sample-label")])
               ]
             ),
+            ...(model.jumpError
+              ? [p([cls("jump-feedback"), h.Role("status")], [model.jumpError])]
+              : []),
+            ...(model.query.trim()
+              ? [
+                  div(
+                    [cls("jump-results"), h.AriaLabel("Thread search results")],
+                    filtered.map((thread) =>
+                      button(
+                        [h.OnClick(focus(thread.id)), cls("jump-result")],
+                        [text(thread.name), text(thread.id, "mono muted")]
+                      )
+                    )
+                  )
+                ]
+              : []),
             div(
               [cls("stage")],
               [
@@ -611,7 +633,12 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                               text(labels[selected.status], "status-label"),
                               h.h2([], [selected.name]),
                               p([cls("thread-id mono")], [selected.id]),
-                              text(selected.group, "muted")
+                              text(selected.group, "muted"),
+                              action(
+                                "Center thread",
+                                focus(selected.id),
+                                "parent-link"
+                              )
                             ]
                           ),
                           div(

@@ -10,6 +10,7 @@ import {
   fit,
   getJson,
   layout,
+  matches,
   parseEvents,
   parseThreads,
   zoomAt
@@ -26,6 +27,7 @@ export const Model = Schema.Struct({
   events: Schema.Array(Event),
   selected: Schema.String,
   query: Schema.String,
+  jumpError: Schema.String,
   filter: Schema.String,
   camera: Camera,
   width: Schema.Finite,
@@ -53,6 +55,7 @@ export const Message = defineMessageUnion({
   Zoom: { factor: Schema.Finite, x: Schema.Finite, y: Schema.Finite },
   Fit: {},
   Focus: { id: Schema.String },
+  Jump: {},
   DragStart: { x: Schema.Finite, y: Schema.Finite },
   DragMove: { x: Schema.Finite, y: Schema.Finite },
   DragEnd: {},
@@ -138,6 +141,7 @@ export const initialModel: Model = {
   events: [],
   selected: "",
   query: "",
+  jumpError: "",
   filter: "all",
   camera: { x: 28, y: 20, zoom: 0.64 },
   width: 1000,
@@ -211,7 +215,7 @@ export function update(
       }
     }
     case "Search":
-      return { model: { ...model, query: message.query } }
+      return { model: { ...model, query: message.query, jumpError: "" } }
     case "ClearFilters":
       return { model: { ...model, query: "", filter: "all" } }
     case "Filter":
@@ -230,6 +234,25 @@ export function update(
           camera: fit(layout(model.threads), model.width, model.height)
         }
       }
+    case "Jump": {
+      const query = model.query.trim()
+      const exact = model.threads.find((thread) => thread.id === query)
+      const results = query
+        ? model.threads.filter((thread) => matches(thread, query, model.filter))
+        : []
+      const target = exact ?? (results.length === 1 ? results[0] : undefined)
+      return target
+        ? update(model, Message.Focus({ id: target.id }))
+        : {
+            model: {
+              ...model,
+              jumpError:
+                results.length > 1
+                  ? "Select a thread from the results."
+                  : "Enter a matching thread ID or name."
+            }
+          }
+    }
     case "Focus": {
       const node = layout(model.threads).nodes.find((n) => n.id === message.id)
       if (!node) return { model }
@@ -238,6 +261,10 @@ export function update(
         ...result,
         model: {
           ...result.model,
+          query: "",
+          filter: "all",
+          jumpError: "",
+          drag: null,
           camera: {
             zoom: 1,
             x: model.width / 2 - node.x - 95,

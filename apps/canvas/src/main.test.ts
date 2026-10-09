@@ -61,3 +61,34 @@ test("settings reject invalid request limits", () => {
       update(initialModel, Message.Setting({ key: "eventLimit", value })).model
     ).toBe(initialModel)
 })
+
+test("jump finds an exact ID across state filters and centers its events", () => {
+  const model = { ...initialModel, query: "  demo-7  ", filter: "running" }
+  const next = update(model, Message.Jump()).model
+  expect(next.selected).toBe("demo-7")
+  expect(next.query).toBe("")
+  expect(next.filter).toBe("all")
+  expect(next.camera.zoom).toBe(1)
+  expect(next.events.length).toBeGreaterThan(0)
+})
+
+test("ambiguous and missing jumps preserve the current selection", () => {
+  for (const query of ["Coordinator", "missing-thread", ""]) {
+    const next = update(
+      { ...initialModel, query, selected: "demo-7" },
+      Message.Jump()
+    ).model
+    expect(next.selected).toBe("demo-7")
+    expect(next.jumpError.length).toBeGreaterThan(0)
+  }
+})
+
+test("a live jump requests the selected thread events", () => {
+  const next = update(
+    { ...initialModel, source: "live", query: "demo-7" },
+    Message.Jump()
+  )
+  expect(next.model.selected).toBe("demo-7")
+  expect(next.model.eventLoading).toBe(true)
+  expect(next.commands).toHaveLength(1)
+})

@@ -1074,3 +1074,38 @@ h1 {
     transition: none !important;
   }
 }
+
+.jump-results {
+  max-height: 150px;
+  overflow: auto;
+  flex: none;
+  border-bottom: 1px solid #dde3da;
+  padding: 4px 24px;
+}
+.jump-result {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  padding: 8px 0;
+  text-align: left;
+  font-size: 11px;
+}
+.jump-result .mono {
+  overflow-wrap: anywhere;
+  margin-left: auto;
+  font-size: 10px;
+}
+.jump-feedback {
+  padding: 8px 24px;
+  font-size: 11px;
+  color: #99634c;
+}
+@media (max-width: 560px) {
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
