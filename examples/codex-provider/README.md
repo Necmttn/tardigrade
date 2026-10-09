@@ -9,8 +9,11 @@ From this directory, run:
 ```sh
 bun install
 bun main.ts login
+bun main.ts models
 CODEX_MODEL=<available-model-id> bun main.ts ask "Say hello."
 ```
+
+`models` lists the model IDs available to the signed-in account, excluding entries marked hidden by the server. Use one of these IDs for `CODEX_MODEL`. Model access changes over time; an older model ID can return HTTP 400. `CODEX_CLIENT_VERSION` and `CODEX_MODEL_LIST_MS` override the discovery version and timeout from `MODEL_LIST_DEFAULTS`.
 
 `login` saves tokens to `.codex-credentials.json` with mode `0600`. `CODEX_CREDENTIALS_FILE` overrides the path. `ask` reads that file and saves rotated tokens after renewal. Keep the file private. A failed write can leave a `.tmp` file; remove that file before repeating login.
 
