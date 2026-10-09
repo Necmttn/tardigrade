@@ -1,5 +1,6 @@
 import { DateTime, Effect, Option, Queue, Schema, Stream } from "effect"
 import { Command, Mount, Subscription, type Update } from "foldkit"
+import { demoWake } from "./activity"
 import { defineMessageUnion } from "foldkit/message"
 import {
   DEFAULTS,
@@ -26,6 +27,10 @@ export const Model = Schema.Struct({
   threads: Schema.Array(Thread),
   events: Schema.Array(Event),
   selected: Schema.String,
+  canvasMode: Schema.Literals(["threads", "activity"]),
+  activitySeq: Schema.Finite,
+  demoWakeKind: Schema.Literals(["message", "alarm", "response"]),
+  demoWakeStep: Schema.Finite,
   inspectorTab: Schema.Literals(["conversation", "events"]),
   query: Schema.String,
   jumpError: Schema.String,
@@ -52,6 +57,11 @@ export const Message = defineMessageUnion({
   Select: { id: Schema.String },
   InspectorTab: { tab: Schema.Literals(["conversation", "events"]) },
   CloseThread: {},
+  CanvasMode: { mode: Schema.Literals(["threads", "activity"]) },
+  InspectArrival: { seq: Schema.Finite },
+  WakeSource: { kind: Schema.Literals(["message", "alarm", "response"]) },
+  ReplayWake: {},
+  StepWake: {},
   Search: { query: Schema.String },
   Filter: { status: Schema.String },
   ClearFilters: {},
@@ -143,6 +153,10 @@ export const initialModel: Model = {
   threads: demoThreads(DEFAULTS.demoThreads),
   events: [],
   selected: "",
+  canvasMode: "threads",
+  activitySeq: -1,
+  demoWakeKind: "message",
+  demoWakeStep: -1,
   inspectorTab: "conversation",
   query: "",
   jumpError: "",
@@ -204,6 +218,53 @@ export function update(
         commands: next.source === "live" ? [fleet(next)] : []
       }
     }
+    case "CanvasMode": {
+      const target = model.selected || model.threads[0]?.id
+      const result =
+        target && !model.selected
+          ? update(model, Message.Select({ id: target }))
+          : { model }
+      return { ...result, model: { ...result.model, canvasMode: message.mode } }
+    }
+    case "InspectArrival":
+      return {
+        model: { ...model, activitySeq: message.seq, inspectorTab: "events" }
+      }
+    case "WakeSource":
+      return {
+        model: { ...model, demoWakeKind: message.kind, demoWakeStep: -1 }
+      }
+    case "ReplayWake":
+    case "StepWake": {
+      const thread = model.threads.find((t) => t.id === model.selected)
+      if (
+        model.source !== "demo" ||
+        !thread ||
+        (message._tag === "StepWake" &&
+          (model.demoWakeStep < 0 || model.demoWakeStep >= 3))
+      )
+        return { model }
+      const step = message._tag === "ReplayWake" ? 0 : model.demoWakeStep + 1
+      const records = demoWake(thread, model.demoWakeKind, step)
+      return {
+        model: {
+          ...model,
+          demoWakeStep: step,
+          events: records,
+          activitySeq: -1,
+          threads: model.threads.map((t) =>
+            t.id === thread.id
+              ? {
+                  ...t,
+                  status:
+                    step < 2 ? "waiting" : step === 2 ? "running" : "settled",
+                  events: records.length
+                }
+              : t
+          )
+        }
+      }
+    }
     case "InspectorTab":
       return { model: { ...model, inspectorTab: message.tab } }
     case "CloseThread":
@@ -221,6 +282,8 @@ export function update(
       const next: Model = {
         ...model,
         selected: message.id,
+        activitySeq: -1,
+        demoWakeStep: -1,
         inspectorTab: "conversation",
         events: thread && model.source === "demo" ? demoEvents(thread) : [],
         eventError: "",
@@ -321,7 +384,10 @@ export function update(
       return { model: { ...model, drag: null } }
     case "Resized":
       return {
-        model: { ...model, width: message.width, height: message.height }
+        model:
+          message.width > 0 && message.height > 0
+            ? { ...model, width: message.width, height: message.height }
+            : model
       }
     case "Settings":
       return { model: { ...model, settings: !model.settings } }

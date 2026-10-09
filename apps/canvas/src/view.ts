@@ -1,3 +1,4 @@
+import { activityView } from "./activity-view"
 import { Option } from "effect"
 import type { Document, HtmlBuilder } from "foldkit/html"
 import { layout, matches, type Status } from "./data"
@@ -337,6 +338,16 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                     ])
                   ]
                 ),
+                action(
+                  model.canvasMode === "threads"
+                    ? "Activity map"
+                    : "Thread map",
+                  Message.CanvasMode({
+                    mode:
+                      model.canvasMode === "threads" ? "activity" : "threads"
+                  }),
+                  "filter-reset"
+                ),
                 action("Jump to thread", Message.Jump(), "filter-reset"),
                 h.select(
                   [
@@ -383,9 +394,14 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
             div(
               [cls("stage")],
               [
+                ...(model.canvasMode === "activity"
+                  ? [activityView(model, h)]
+                  : []),
                 div(
                   [
-                    cls(`canvas ${model.drag ? "dragging" : ""}`),
+                    cls(
+                      `canvas ${model.drag ? "dragging" : ""} ${model.canvasMode === "activity" ? "canvas-hidden" : ""}`
+                    ),
                     h.Id("canvas"),
                     h.Tabindex(0),
                     h.Role("region"),
@@ -844,7 +860,7 @@ export function view(model: Model, h: HtmlBuilder<Message>): Document {
                                     div(
                                       [
                                         cls(
-                                          `event ${event.tag.includes("Failed") ? "event-failed" : ""}`
+                                          `event ${event.tag.includes("Failed") ? "event-failed" : ""} ${event.seq === model.activitySeq ? "arrival-selected" : ""}`
                                         )
                                       ],
                                       [

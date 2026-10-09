@@ -30,6 +30,10 @@ export const Event = Schema.Struct({
   tag: Schema.String,
   at: Schema.Finite,
   detail: Schema.String,
+  source: Schema.optionalKey(Schema.String),
+  receiptId: Schema.optionalKey(Schema.String),
+  turn: Schema.optionalKey(Schema.String),
+  origin: Schema.optionalKey(Schema.String),
   message: Schema.optionalKey(
     Schema.Struct({
       role: Schema.Literals(["user", "assistant"]),
@@ -208,6 +212,10 @@ export function parseEvents(value: unknown): Event[] {
     const message = conversation(event)
     return {
       ...(message ? { message } : {}),
+      ...(typeof event.source === "string" ? { source: event.source } : {}),
+      ...(typeof event.id === "string" ? { receiptId: event.id } : {}),
+      ...(typeof event.turn === "string" ? { turn: event.turn } : {}),
+      ...(typeof event.from === "string" ? { origin: event.from } : {}),
       seq: number(row.seq),
       tag: string(event.type, string(event._tag, "Event")),
       at: number(event.at),

@@ -36,3 +36,11 @@ bun run --cwd apps/canvas build
 ```
 
 The repository gate includes these checks and Effect lint. Tests cover 1,024 nodes, cycles, missing parents, deep branches, cursor-centered zoom, filters, event payload reduction, request failures, and late responses. The production build produces static files. Its host must route `/v1` to the server; the Vite development proxy is not part of the build.
+
+## Activity map
+
+Select Activity map to follow an incoming event through its delivery record and into a thread. The view recognizes MessageReceived, AlarmFired, ResponseReceived, and CallTimedOut. It displays the next loaded activity record. A matching message and turn identifier is labeled explicitly. Event order alone is labeled as unconfirmed causality. The view cannot infer missing host events or identify an unrecorded source.
+
+In Demo mode, select Webhook, Alarm, or Child response. Select Replay demo, then Next event to move through waiting, received, running, and settled. These controls change local sample records only. Live mode has no replay controls. Its records use the same polling interval and event limit as the conversation view.
+
+The source, delivery, and thread layers take visual direction from [Electric](https://electric.ax/). The app does not use Electric services.
