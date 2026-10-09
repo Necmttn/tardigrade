@@ -1,0 +1,118 @@
+import { expect, test } from "bun:test"
+import { initialModel, Message, update } from "./main"
+
+test("source changes invalidate pending server results", () => {
+  const live = update(initialModel, Message.Source({ source: "live" })).model
+  const demo = update(live, Message.Source({ source: "demo" })).model
+  const result = update(
+    demo,
+    Message.FleetLoaded({
+      generation: live.generation,
+      threads: [],
+      at: "old"
+    })
+  )
+  expect(result.model).toBe(demo)
+  expect(demo.threads.length).toBe(256)
+})
+test("selection changes reject late events for another thread", () => {
+  const model = { ...initialModel, source: "live" as const, selected: "new" }
+  const result = update(
+    model,
+    Message.EventsLoaded({
+      generation: model.generation,
+      id: "old",
+      events: [{ seq: 1, at: 0, tag: "wrong", detail: "" }]
+    })
+  )
+  expect(result.model).toBe(model)
+})
+test("actor changes clear old records and invalidate pending requests", () => {
+  const result = update(
+    { ...initialModel, source: "live" },
+    Message.Setting({ key: "actor", value: "other" })
+  ).model
+  expect(result.threads).toEqual([])
+  expect(result.selected).toBe("")
+  expect(result.generation).toBe(initialModel.generation + 1)
+})
+test("polling does not overlap fleet requests", () => {
+  const live = update(initialModel, Message.Source({ source: "live" })).model
+  expect(update(live, Message.Refresh()).commands).toBeUndefined()
+})
+test("failed refresh preserves records with a visible error", () => {
+  const live = { ...initialModel, source: "live" as const, loading: true }
+  const next = update(
+    live,
+    Message.FleetFailed({ generation: live.generation })
+  ).model
+  expect(next.threads).toEqual(live.threads)
+  expect(next.error).toContain("Cannot read")
+  expect(next.loading).toBe(false)
+})
+test("keyboard pan moves the camera without starting a drag", () => {
+  const next = update(initialModel, Message.Pan({ x: 80, y: -80 })).model
+  expect(next.camera.x).toBe(initialModel.camera.x + 80)
+  expect(next.drag).toBeNull()
+})
+test("settings reject invalid request limits", () => {
+  for (const value of ["0", "-1", "NaN", "Infinity", "1.5"])
+    expect(
+      update(initialModel, Message.Setting({ key: "eventLimit", value })).model
+    ).toBe(initialModel)
+})
+
+test("jump finds an exact ID across state filters and centers its events", () => {
+  const model = { ...initialModel, query: "  demo-7  ", filter: "running" }
+  const next = update(model, Message.Jump()).model
+  expect(next.selected).toBe("demo-7")
+  expect(next.query).toBe("")
+  expect(next.filter).toBe("all")
+  expect(next.camera.zoom).toBe(1)
+  expect(next.events.length).toBeGreaterThan(0)
+})
+
+test("ambiguous and missing jumps preserve the current selection", () => {
+  for (const query of ["Coordinator", "missing-thread", ""]) {
+    const next = update(
+      { ...initialModel, query, selected: "demo-7" },
+      Message.Jump()
+    ).model
+    expect(next.selected).toBe("demo-7")
+    expect(next.jumpError.length).toBeGreaterThan(0)
+  }
+})
+
+test("a live jump requests the selected thread events", () => {
+  const next = update(
+    { ...initialModel, source: "live", query: "demo-7" },
+    Message.Jump()
+  )
+  expect(next.model.selected).toBe("demo-7")
+  expect(next.model.eventLoading).toBe(true)
+  expect(next.commands).toHaveLength(1)
+})
+
+test("node selection opens conversation and closing rejects late events", () => {
+  const selected = update(
+    { ...initialModel, inspectorTab: "events" },
+    Message.Select({ id: "demo-7" })
+  ).model
+  expect(selected.inspectorTab).toBe("conversation")
+  expect(selected.events.some((event) => event.message)).toBe(true)
+  const closed = update(
+    { ...selected, source: "live" },
+    Message.CloseThread()
+  ).model
+  expect(closed.selected).toBe("")
+  expect(
+    update(
+      closed,
+      Message.EventsLoaded({
+        id: "demo-7",
+        generation: closed.generation,
+        events: selected.events
+      })
+    ).model
+  ).toBe(closed)
+})

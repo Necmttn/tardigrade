@@ -17,13 +17,13 @@ const packageId = (name: string) => name.replaceAll("/", "-")
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
-const apps = ["cli", "server", "voyager"]
+const apps = ["cli", "server", "voyager", "canvas"]
 const typecheckedApps = [...apps, "web"]
 const examplePkg = (name: string) => `${root}examples/react-rlm-chat/${name}`
 const examplePackages = ["server", "web"]
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
 // can resolve and emit them.
-const bundled = ["voyager", "web"]
+const bundled = ["voyager", "web", "canvas"]
 
 const tsconfigsIn = (directory: string): ReadonlyArray<string> =>
   [...new Bun.Glob("tsconfig*.json").scanSync({ cwd: directory, absolute: true, onlyFiles: true })]

@@ -1,0 +1,27 @@
+{
+  "name": "@clavia/tardigrade-canvas",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "foldkit": "0.167.0",
+    "effect": "4.0.0",
+    "@effect/platform-browser": "4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vite": "^8.0.16"
+  },
+  "installConfig": {
+    "hoistingLimits": "workspaces"
+  },
+  "engines": {
+    "bun": ">=1.4.2"
+  }
+}
