@@ -1,43 +1,37 @@
 # Codex provider
 
-Use `tardie/model/providers/codex` to call Codex directly through the existing model provider interface. The provider supports `LanguageModel.streamText`, `generateText`, and `generateObject` through the Responses stream decoder. The example runs in Bun. The provider and authentication modules use portable Effect services and have no filesystem or server dependency.
+Sign in with your ChatGPT account and make a single Codex request through Tardigrade's model interface. This example runs in Bun. For an interactive browser chat with tools and child agents, see [react-rlm-chat](../react-rlm-chat/README.md#run-with-codex-on-bun).
 
 ## Run
 
-From this directory, run:
+From the repository root:
 
 ```sh
 bun install
+cd examples/codex-provider
 bun main.ts login
 bun main.ts models
-CODEX_MODEL=<available-model-id> bun main.ts ask "Say hello."
+CODEX_MODEL=<id-from-models> bun main.ts ask "Say hello."
 ```
 
-`models` lists the model IDs available to the signed-in account, excluding entries marked hidden by the server. Use one of these IDs for `CODEX_MODEL`. Model access changes over time; an older model ID can return HTTP 400. `CODEX_CLIENT_VERSION` and `CODEX_MODEL_LIST_MS` override the discovery version and timeout from `MODEL_LIST_DEFAULTS`.
+`login` saves private credentials to `.codex-credentials.json`. `models` lists the models available to your account. `ask` prints a response and exits, renewing and saving credentials when needed. Set `CODEX_CREDENTIALS_FILE` to use a different credential file.
 
-`login` saves tokens to `.codex-credentials.json` with mode `0600`. `CODEX_CREDENTIALS_FILE` overrides the path. `ask` reads that file and saves rotated tokens after renewal. Keep the file private. A failed write can leave a `.tmp` file; remove that file before repeating login.
+## Use in your application
 
-For a research actor with code execution, workspace files, and delegated agents, use the [Codex chat instructions](../react-rlm-chat/README.md#run-with-codex-on-bun).
-
-## Integrate
+Create a shared credentials service with a callback that saves renewed tokens, then pass it to the provider:
 
 ```ts
 import { createProviderLayer } from "tardie/model/providers/codex"
 import { credentialsFromTokens } from "tardie/model/providers/codex-auth"
 
 const auth = yield* credentialsFromTokens(tokens, {}, persistRotatedTokens)
-const providerLayer = createProviderLayer(auth)
-const layer = providerLayer({
+const layer = createProviderLayer(auth)({
   provider: "codex",
   client: {},
   model: { model: "<available-model-id>" }
 })
 ```
 
-Construct the credentials service once per account and share it across bindings. It serializes token renewal. Supply a persistence callback to retain rotated tokens across process restarts. Interactive device login is explicit and never runs during provider construction. `AUTH_DEFAULTS` exports authentication limits; `deviceLogin` and `credentialsFromTokens` accept overrides.
+The layer supports `LanguageModel.generateText`, `streamText`, and `generateObject`. Share `auth` across model bindings for the same account so concurrent requests coordinate token renewal. See [credentials.ts](credentials.ts) for file persistence and [main.ts](main.ts) for login and model discovery.
 
-The default `providerLayer` accepts a Codex access token as `client.apiKey`. It reads the account routing claim from that token. It does not renew static tokens. `tdg setup` recognizes provider `codex`, uses protocol `openai-responses`, and generates the Codex provider import. Supply the access token through the configured secret environment variable. For automatic renewal, replace that registry entry with `createProviderLayer(auth)` from a host-owned credentials service.
-
-`DEFAULT_BASE_URL` names the Codex endpoint. Override it through `client.apiUrl`. Ordinary model request timeout and retry settings remain available through the model binding. The provider forces `store: false` and moves leading system messages into `instructions`. It preserves tool calls and reasoning items through the OpenAI Responses adapter.
-
-Codex does not enforce `max_output_tokens`. `DEFAULT_OUTPUT_LIMIT` is `"warn"`: the provider reports the requested value before omitting it. Model binding settings expose `outputTokenLimitEnforcement: "unsupported"`. Pass `{ outputLimit: "reject" }` as the second argument to `createProviderLayer` to reject requests that specify this limit. This policy does not impose a token ceiling through prompt instructions.
+Codex does not enforce output token limits. The provider warns and omits `max_output_tokens` by default. Use `createProviderLayer(auth, { outputLimit: "reject" })` to reject requests that specify this limit.
