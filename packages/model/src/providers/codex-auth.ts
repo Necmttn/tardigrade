@@ -116,5 +116,5 @@ export const credentialsFromTokens = Effect.fn("Codex.credentialsFromTokens")(fu
       yield* Ref.set(pendingSave, false)
     }
     return { accessToken: current.accessToken, accountId: current.accountId }
-  })) }
+  }).pipe(Effect.uninterruptible)) }
 })
