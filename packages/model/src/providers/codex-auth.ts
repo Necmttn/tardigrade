@@ -5,6 +5,7 @@ export const AUTH_DEFAULTS = {
   issuer: "https://auth.openai.com",
   clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
   requestMs: 30_000,
+  persistMs: 30_000,
   loginMs: 900_000,
   pollMs: 5_000,
   refreshMarginMs: 60_000
@@ -92,13 +93,14 @@ export const deviceLogin = Effect.fn("Codex.deviceLogin")(function* (
 })
 
 // credentialsFromTokens serializes renewal and retains rotated tokens across requests (codex-auth.test.ts).
-export const credentialsFromTokens = Effect.fn("Codex.credentialsFromTokens")(function* (
+export const credentialsFromTokens = Effect.fn("Codex.credentialsFromTokens")(function* <R = never>(
   initial: Tokens,
   overrides: AuthOptions = {},
-  onRefresh: (tokens: Tokens) => Effect.Effect<void, CodexAuthError> = () => Effect.void
+  onRefresh: (tokens: Tokens) => Effect.Effect<void, CodexAuthError, R> = () => Effect.void
 ) {
   const options = { ...AUTH_DEFAULTS, ...overrides }
   const http = yield* HttpClient.HttpClient
+  const services = yield* Effect.context<R>()
   const tokens = yield* Ref.make(initial)
   const pendingSave = yield* Ref.make(false)
   const lock = yield* Semaphore.make(1)
@@ -112,18 +114,21 @@ export const credentialsFromTokens = Effect.fn("Codex.credentialsFromTokens")(fu
       yield* Ref.set(pendingSave, true)
     }
     if (yield* Ref.get(pendingSave)) {
-      yield* onRefresh(current)
+      yield* onRefresh(current).pipe(
+        Effect.provideContext(services),
+        Effect.timeoutOrElse({ duration: options.persistMs, orElse: () => Effect.fail(new CodexAuthError({ message: `Codex credential persistence exceeded ${options.persistMs}ms` })) })
+      )
       yield* Ref.set(pendingSave, false)
     }
     return { accessToken: current.accessToken, accountId: current.accountId }
   }).pipe(Effect.uninterruptible)) }
 })
 
-export interface CodexOAuthOptions extends AuthOptions {
+export interface CodexOAuthOptions<R = never> extends AuthOptions {
   readonly tokens: Tokens
-  readonly persist: (tokens: Tokens) => Effect.Effect<void, CodexAuthError>
+  readonly persist: (tokens: Tokens) => Effect.Effect<void, CodexAuthError, R>
 }
 
 // codexOAuthLayer supplies an account's renewable credentials and persistence callback (codex-auth.test.ts).
-export const codexOAuthLayer = ({ tokens, persist, ...options }: CodexOAuthOptions): Layer.Layer<CodexCredentials, never, HttpClient.HttpClient> =>
+export const codexOAuthLayer = <R = never>({ tokens, persist, ...options }: CodexOAuthOptions<R>): Layer.Layer<CodexCredentials, never, HttpClient.HttpClient | R> =>
   Layer.effect(CodexCredentials, credentialsFromTokens(tokens, options, persist))

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Fiber } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { AUTH_DEFAULTS, CodexAuthError, CodexCredentials, codexOAuthLayer, credentialsFromTokens, deviceLogin, type Tokens } from "./codex-auth"
 import { oauthFixture } from "../testing/fixtures/oauth"
@@ -141,3 +141,71 @@ test("HTTP refresh timeout remains bounded during protected renewal", async () =
     expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
   } finally { fixture.close() }
 })
+
+class TokenStore extends Context.Service<TokenStore, {
+  readonly save: (tokens: Tokens) => Effect.Effect<void, CodexAuthError>
+}>()("test/TokenStore") {}
+
+test("OAuth layer captures persistence dependencies during construction", async () => {
+  const fixture = authFixture()
+  const saved: string[] = []
+  try {
+    await Effect.runPromise(Effect.gen(function* () {
+      const initial = yield* login(fixture)
+      const credentials = codexOAuthLayer({
+        tokens: initial,
+        issuer: fixture.issuer,
+        persist: tokens => Effect.gen(function* () {
+          const store = yield* TokenStore
+          yield* store.save(tokens)
+        })
+      }).pipe(Layer.provide(Layer.succeed(TokenStore, {
+        save: tokens => Effect.sync(() => { saved.push(tokens.refreshToken) })
+      })))
+      const auth = yield* CodexCredentials.pipe(Effect.provide(credentials))
+      expect((yield* auth.credentials).accountId).toBe("fixture-account")
+      expect(saved).toEqual(["refresh-1"])
+    }).pipe(Effect.provide(FetchHttpClient.layer)))
+  } finally { fixture.close() }
+})
+
+for (const cancel of [false, true]) {
+  test(`persistence timeout releases renewal and retries the rotated tokens${cancel ? " after cancellation" : ""}`, async () => {
+    const fixture = authFixture()
+    let attempts = 0
+    let interrupted = false
+    const saved: string[] = []
+    try {
+      await Effect.runPromise(Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const initial = yield* login(fixture)
+        const auth = yield* CodexCredentials.pipe(Effect.provide(codexOAuthLayer({
+          tokens: initial, issuer: fixture.issuer, persistMs: 20,
+          persist: tokens => Effect.gen(function* () {
+            attempts++
+            if (attempts === 1) {
+              yield* Deferred.succeed(started, undefined)
+              return yield* Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => { interrupted = true })))
+            }
+            saved.push(tokens.refreshToken)
+          })
+        })))
+        const first = yield* auth.credentials.pipe(Effect.result, Effect.forkChild)
+        yield* Deferred.await(started)
+        if (cancel) {
+          yield* Effect.sync(() => first.interruptUnsafe())
+          expect((yield* Fiber.await(first))._tag).toBe("Failure")
+        } else {
+          const result = yield* Fiber.join(first)
+          expect(result._tag).toBe("Failure")
+          if (result._tag === "Failure") expect(result.failure.message).toContain("persistence exceeded 20ms")
+        }
+        expect(interrupted).toBe(true)
+        expect((yield* auth.credentials).accountId).toBe("fixture-account")
+        expect(saved).toEqual(["refresh-1"])
+        expect(attempts).toBe(2)
+        expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
+      }).pipe(Effect.provide(FetchHttpClient.layer), Effect.timeout(2000)))
+    } finally { fixture.close() }
+  })
+}

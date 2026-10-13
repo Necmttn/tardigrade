@@ -17,5 +17,5 @@ export const savedCredentialsLayer = (defaultFile = DEFAULT_CREDENTIALS_FILE) =>
   const tokens = yield* Schema.decodeEffect(Schema.fromJsonString(tokensSchema))(encoded).pipe(
     Effect.mapError(() => new CodexAuthError({ message: "Invalid credential file; run login" }))
   )
-  return codexOAuthLayer({ tokens, persist: updated => save(file, updated).pipe(Effect.provideService(FileSystem.FileSystem, fs)) })
+  return codexOAuthLayer({ tokens, persist: updated => save(file, updated) })
 }))

@@ -33,7 +33,7 @@ const layer = createProviderLayer()({
 }).pipe(Layer.provide(credentials))
 ```
 
-`codexOAuthLayer` requires `HttpClient` and provides `CodexCredentials`. It accepts the overrides in `AUTH_DEFAULTS`; initial login remains explicit through `deviceLogin`.
+`codexOAuthLayer` requires `HttpClient` and any services used by `persist`, then provides `CodexCredentials`. It accepts the overrides in `AUTH_DEFAULTS`, including `persistMs` for the persistence timeout. A failed or timed-out save retains the rotated tokens in memory and retries persistence on the next credentials request. Initial login remains explicit through `deviceLogin`.
 
 The model layer supports `LanguageModel.generateText`, `streamText`, and `generateObject`. Share the credentials layer across model bindings for the same account so concurrent requests coordinate token renewal. See [credentials.ts](credentials.ts) for file persistence and [main.ts](main.ts) for login and model discovery.
 
