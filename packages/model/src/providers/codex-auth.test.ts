@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Deferred, Effect, Fiber, Layer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient, type HttpClient } from "effect/unstable/http"
 import { AUTH_DEFAULTS, CodexAuthError, CodexCredentials, codexOAuthLayer, credentialsFromTokens, deviceLogin, type Tokens } from "./codex-auth"
 import { oauthFixture } from "../testing/fixtures/oauth"
 
@@ -43,13 +43,17 @@ const persist = (file: string) => (tokens: Tokens) => Effect.tryPromise({
   catch: () => new CodexAuthError({ message: "Cannot persist fixture credentials" })
 })
 
+const withAuthFixture = <A, E>(options: Parameters<typeof authFixture>[0], run: (fixture: ReturnType<typeof authFixture>) => Effect.Effect<A, E, HttpClient.HttpClient>) =>
+  Effect.runPromise(Effect.acquireUseRelease(
+    Effect.sync(() => authFixture(options)), run, fixture => Effect.sync(() => fixture.close())
+  ).pipe(Effect.provide(FetchHttpClient.layer), Effect.timeout(2000)))
+
 for (const cancel of [false, true]) {
   test(`HTTP login and renewal persist across restart${cancel ? " after caller cancellation" : " with concurrent callers"}`, async () => {
-    const fixture = authFixture({ holdRefresh: true })
     const directory = await mkdtemp(join(tmpdir(), "codex-auth-"))
     const file = join(directory, "credentials.json")
     try {
-      await Effect.runPromise(Effect.gen(function* () {
+      await withAuthFixture({ holdRefresh: true }, fixture => Effect.gen(function* () {
         const initial = yield* login(fixture)
         yield* persist(file)(initial)
         const auth = yield* CodexCredentials.pipe(Effect.provide(codexOAuthLayer({ tokens: initial, issuer: fixture.issuer, persist: persist(file) })))
@@ -69,143 +73,101 @@ for (const cancel of [false, true]) {
         const afterRestart: Tokens = JSON.parse(yield* Effect.promise(() => readFile(file, "utf8")))
         expect(afterRestart.refreshToken).toBe("refresh-2")
         expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token").map(request => request.body.refresh_token)).toEqual(["refresh-0", "refresh-1"])
-      }).pipe(Effect.provide(FetchHttpClient.layer), Effect.timeout(2000)))
-    } finally {
-      fixture.close()
-      await rm(directory, { recursive: true, force: true })
-    }
+      }))
+    } finally { await rm(directory, { recursive: true, force: true }) }
   })
 }
 
-test("valid credentials make no HTTP requests", async () => {
-  const fixture = authFixture()
-  try {
-    const value = await Effect.runPromise(Effect.gen(function* () {
-      const auth = yield* credentialsFromTokens({ accessToken: "token", accountId: "account", refreshToken: "refresh", expiresAt: 9_999_999_999_000 }, { issuer: fixture.issuer })
-      return yield* auth.credentials
-    }).pipe(Effect.provide(FetchHttpClient.layer)))
-    expect(value.accessToken).toBe("token")
-    expect(fixture.requests).toHaveLength(0)
-  } finally { fixture.close() }
-})
+test("valid credentials make no HTTP requests", () => withAuthFixture({}, fixture => Effect.gen(function* () {
+  const auth = yield* credentialsFromTokens({ accessToken: "token", accountId: "account", refreshToken: "refresh", expiresAt: 9_999_999_999_000 }, { issuer: fixture.issuer })
+  expect((yield* auth.credentials).accessToken).toBe("token")
+  expect(fixture.requests).toHaveLength(0)
+})))
 
-test("HTTP authentication failures exclude response contents", async () => {
-  const fixture = authFixture({ loginStatus: 401 })
-  try {
-    const result = await Effect.runPromise(login(fixture).pipe(Effect.provide(FetchHttpClient.layer), Effect.result))
-    expect(result._tag).toBe("Failure")
-    if (result._tag === "Failure") {
-      expect(result.failure.message).toContain("authentication response")
-      expect(JSON.stringify(result.failure)).not.toContain("private-secret")
-    }
-  } finally { fixture.close() }
-})
-
-test("failed persistence retries the rotated token without another HTTP exchange", async () => {
-  const fixture = authFixture()
-  let saves = 0
-  try {
-    await Effect.runPromise(Effect.gen(function* () {
-      const initial = yield* login(fixture)
-      const auth = yield* credentialsFromTokens(initial, { issuer: fixture.issuer }, tokens => Effect.suspend(() => {
-        saves++
-        expect(tokens.refreshToken).toBe("refresh-1")
-        return saves === 1 ? Effect.fail(new CodexAuthError({ message: "Storage unavailable" })) : Effect.void
-      }))
-      expect((yield* Effect.result(auth.credentials))._tag).toBe("Failure")
-      expect((yield* auth.credentials).accountId).toBe("fixture-account")
-    }).pipe(Effect.provide(FetchHttpClient.layer)))
-    expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
-    expect(saves).toBe(2)
-  } finally { fixture.close() }
-})
-
-test("HTTP authentication request timeout is configurable", async () => {
-  const fixture = authFixture({ stallLogin: true })
-  try {
-    const result = await Effect.runPromise(deviceLogin(() => Effect.void, { issuer: fixture.issuer, requestMs: 20 }).pipe(Effect.provide(FetchHttpClient.layer), Effect.result))
-    expect(result._tag).toBe("Failure")
-    expect(fixture.requests).toHaveLength(1)
-  } finally { fixture.close() }
-})
-
-test("HTTP refresh timeout remains bounded during protected renewal", async () => {
-  const fixture = authFixture({ holdRefresh: true })
-  try {
-    const result = await Effect.runPromise(Effect.gen(function* () {
-      const initial = yield* login(fixture)
-      const auth = yield* credentialsFromTokens(initial, { issuer: fixture.issuer, requestMs: 50 })
-      return yield* Effect.result(auth.credentials)
-    }).pipe(Effect.provide(FetchHttpClient.layer)))
-    expect(result._tag).toBe("Failure")
-    expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
-  } finally { fixture.close() }
-})
+test("HTTP authentication failures exclude response contents", () => withAuthFixture({ loginStatus: 401 }, fixture => Effect.gen(function* () {
+  const result = yield* login(fixture).pipe(Effect.result)
+  expect(result._tag).toBe("Failure")
+  if (result._tag === "Failure") {
+    expect(result.failure.message).toContain("authentication response")
+    expect(JSON.stringify(result.failure)).not.toContain("private-secret")
+  }
+})))
 
 class TokenStore extends Context.Service<TokenStore, {
   readonly save: (tokens: Tokens) => Effect.Effect<void, CodexAuthError>
 }>()("test/TokenStore") {}
 
-test("OAuth layer captures persistence dependencies during construction", async () => {
-  const fixture = authFixture()
+test("OAuth layer captures storage dependencies and retries failed saves without another exchange", () => withAuthFixture({}, fixture => Effect.gen(function* () {
+  const attempted: string[] = []
   const saved: string[] = []
-  try {
-    await Effect.runPromise(Effect.gen(function* () {
-      const initial = yield* login(fixture)
-      const credentials = codexOAuthLayer({
-        tokens: initial,
-        issuer: fixture.issuer,
-        persist: tokens => Effect.gen(function* () {
-          const store = yield* TokenStore
-          yield* store.save(tokens)
-        })
-      }).pipe(Layer.provide(Layer.succeed(TokenStore, {
-        save: tokens => Effect.sync(() => { saved.push(tokens.refreshToken) })
-      })))
-      const auth = yield* CodexCredentials.pipe(Effect.provide(credentials))
-      expect((yield* auth.credentials).accountId).toBe("fixture-account")
-      expect(saved).toEqual(["refresh-1"])
-    }).pipe(Effect.provide(FetchHttpClient.layer)))
-  } finally { fixture.close() }
-})
+  const initial = yield* login(fixture)
+  const credentials = codexOAuthLayer({
+    tokens: initial, issuer: fixture.issuer,
+    persist: tokens => Effect.gen(function* () {
+      const store = yield* TokenStore
+      yield* store.save(tokens)
+    })
+  }).pipe(Layer.provide(Layer.succeed(TokenStore, {
+    save: tokens => Effect.suspend(() => {
+      attempted.push(tokens.refreshToken)
+      if (attempted.length === 1) return Effect.fail(new CodexAuthError({ message: "Storage unavailable" }))
+      return Effect.sync(() => { saved.push(tokens.refreshToken) })
+    })
+  })))
+  const auth = yield* CodexCredentials.pipe(Effect.provide(credentials))
+  expect((yield* Effect.result(auth.credentials))._tag).toBe("Failure")
+  expect(saved).toEqual([])
+  expect((yield* auth.credentials).accountId).toBe("fixture-account")
+  expect(attempted).toEqual(["refresh-1", "refresh-1"])
+  expect(saved).toEqual(["refresh-1"])
+  expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
+})))
+
+test("HTTP authentication request timeout is configurable", () => withAuthFixture({ stallLogin: true }, fixture => Effect.gen(function* () {
+  const result = yield* deviceLogin(() => Effect.void, { issuer: fixture.issuer, requestMs: 20 }).pipe(Effect.result)
+  expect(result._tag).toBe("Failure")
+  expect(fixture.requests).toHaveLength(1)
+})))
+
+test("HTTP refresh timeout remains bounded during protected renewal", () => withAuthFixture({ holdRefresh: true }, fixture => Effect.gen(function* () {
+  const initial = yield* login(fixture)
+  const auth = yield* credentialsFromTokens(initial, { issuer: fixture.issuer, requestMs: 50 })
+  expect((yield* Effect.result(auth.credentials))._tag).toBe("Failure")
+  expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
+})))
 
 for (const cancel of [false, true]) {
-  test(`persistence timeout releases renewal and retries the rotated tokens${cancel ? " after cancellation" : ""}`, async () => {
-    const fixture = authFixture()
+  test(`persistence timeout releases renewal and retries the rotated tokens${cancel ? " after cancellation" : ""}`, () => withAuthFixture({}, fixture => Effect.gen(function* () {
     let attempts = 0
     let interrupted = false
     const saved: string[] = []
-    try {
-      await Effect.runPromise(Effect.gen(function* () {
-        const started = yield* Deferred.make<void>()
-        const initial = yield* login(fixture)
-        const auth = yield* CodexCredentials.pipe(Effect.provide(codexOAuthLayer({
-          tokens: initial, issuer: fixture.issuer, persistMs: 20,
-          persist: tokens => Effect.gen(function* () {
-            attempts++
-            if (attempts === 1) {
-              yield* Deferred.succeed(started, undefined)
-              return yield* Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => { interrupted = true })))
-            }
-            saved.push(tokens.refreshToken)
-          })
-        })))
-        const first = yield* auth.credentials.pipe(Effect.result, Effect.forkChild)
-        yield* Deferred.await(started)
-        if (cancel) {
-          yield* Effect.sync(() => first.interruptUnsafe())
-          expect((yield* Fiber.await(first))._tag).toBe("Failure")
-        } else {
-          const result = yield* Fiber.join(first)
-          expect(result._tag).toBe("Failure")
-          if (result._tag === "Failure") expect(result.failure.message).toContain("persistence exceeded 20ms")
+    const started = yield* Deferred.make<void>()
+    const initial = yield* login(fixture)
+    const auth = yield* CodexCredentials.pipe(Effect.provide(codexOAuthLayer({
+      tokens: initial, issuer: fixture.issuer, persistMs: 20,
+      persist: tokens => Effect.gen(function* () {
+        attempts++
+        if (attempts === 1) {
+          yield* Deferred.succeed(started, undefined)
+          return yield* Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(() => { interrupted = true })))
         }
-        expect(interrupted).toBe(true)
-        expect((yield* auth.credentials).accountId).toBe("fixture-account")
-        expect(saved).toEqual(["refresh-1"])
-        expect(attempts).toBe(2)
-        expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
-      }).pipe(Effect.provide(FetchHttpClient.layer), Effect.timeout(2000)))
-    } finally { fixture.close() }
-  })
+        saved.push(tokens.refreshToken)
+      })
+    })))
+    const first = yield* auth.credentials.pipe(Effect.result, Effect.forkChild)
+    yield* Deferred.await(started)
+    if (cancel) {
+      yield* Effect.sync(() => first.interruptUnsafe())
+      expect((yield* Fiber.await(first))._tag).toBe("Failure")
+    } else {
+      const result = yield* Fiber.join(first)
+      expect(result._tag).toBe("Failure")
+      if (result._tag === "Failure") expect(result.failure.message).toContain("persistence exceeded 20ms")
+    }
+    expect(interrupted).toBe(true)
+    expect((yield* auth.credentials).accountId).toBe("fixture-account")
+    expect(saved).toEqual(["refresh-1"])
+    expect(attempts).toBe(2)
+    expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token")).toHaveLength(1)
+  })))
 }
