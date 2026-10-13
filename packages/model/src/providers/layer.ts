@@ -24,7 +24,7 @@ export const requestKeys = HttpClient.mapRequestEffect((request) => Effect.map(P
   key === undefined ? request : HttpClientRequest.setHeader(request, "Idempotency-Key", key)
 ))
 
-export type ProviderLayer = (options: ProviderOptions) => Layer.Layer<LanguageModel.LanguageModel, never, HttpClient.HttpClient>
+export type ProviderLayer<Requirements = never> = (options: ProviderOptions) => Layer.Layer<LanguageModel.LanguageModel, never, HttpClient.HttpClient | Requirements>
 
 // providerLayer loads a selected provider in Bun; Workers supply an explicit factory (isolation.test.ts).
 export const providerLayer: ProviderLayer = (options) => Layer.unwrap(Effect.tryPromise(async () => {

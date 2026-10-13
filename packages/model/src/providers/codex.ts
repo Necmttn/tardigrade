@@ -4,7 +4,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { unknownModelError } from "../error"
 import { requestKeys, type ProviderLayer } from "./layer"
 import { validatedConfig } from "./options"
-import { credentialsFromAccessToken, type CodexCredentials } from "./codex-auth"
+import { credentialsFromAccessToken, CodexAuthError, CodexCredentials } from "./codex-auth"
 
 export const DEFAULT_BASE_URL = "https://chatgpt.com/backend-api/codex"
 export const DEFAULT_OUTPUT_LIMIT = "warn" as const
@@ -12,9 +12,10 @@ export const MODEL_LIST_DEFAULTS = { baseUrl: DEFAULT_BASE_URL, clientVersion: "
 const modelsSchema = Schema.Struct({ models: Schema.Array(Schema.Struct({ slug: Schema.NonEmptyString, visibility: Schema.optional(Schema.String), context_window: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))) })) })
 
 // listModels reads account-specific model names without selecting a default (codex.test.ts).
-export const listModels = (auth: CodexCredentials["Service"], overrides: Partial<typeof MODEL_LIST_DEFAULTS> = {}) => {
+export const listModels = (overrides: Partial<typeof MODEL_LIST_DEFAULTS> = {}) => {
   const options = { ...MODEL_LIST_DEFAULTS, ...overrides }
   return Effect.gen(function* () {
+    const auth = yield* CodexCredentials
     const credentials = yield* auth.credentials
     const http = yield* HttpClient.HttpClient
     const response = yield* http.execute(HttpClientRequest.get(`${options.baseUrl}/models`).pipe(
@@ -32,10 +33,11 @@ export interface CodexOptions {
 }
 
 // createProviderLayer shares host-owned credentials across model bindings (codex.test.ts).
-export const createProviderLayer = (auth?: CodexCredentials["Service"], policy: CodexOptions = {}): ProviderLayer => options => {
+export const createProviderLayer = (policy: CodexOptions = {}): ProviderLayer<CodexCredentials> => options => {
   if (options.provider !== "codex") throw new Error(`The Codex layer cannot serve ${options.provider}; supply the matching providerLayer`)
   const clientLayer = Layer.effect(OpenAiClient.OpenAiClient, Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
+    const auth = yield* CodexCredentials
     const base = yield* OpenAiClient.make({ ...options.client, apiUrl: options.client.apiUrl ?? DEFAULT_BASE_URL })
     const createResponseStream: OpenAiClient.Service["createResponseStream"] = request => Effect.gen(function* () {
       const input = request.input
@@ -58,10 +60,7 @@ export const createProviderLayer = (auth?: CodexCredentials["Service"], policy: 
         if ((policy.outputLimit ?? DEFAULT_OUTPUT_LIMIT) === "reject") return yield* unknownModelError("Codex cannot enforce max_output_tokens")
         yield* Console.warn(`Codex does not enforce max_output_tokens=${request.max_output_tokens}; the provider omits this field.`)
       }
-      const credentials = yield* auth?.credentials ?? Effect.try({
-        try: () => credentialsFromAccessToken(options.client.apiKey === undefined ? "" : Redacted.value(options.client.apiKey)),
-        catch: unknownModelError
-      })
+      const credentials = yield* auth.credentials
       const client = yield* OpenAiClient.make({ ...options.client, apiKey: Redacted.make(credentials.accessToken), apiUrl: options.client.apiUrl ?? DEFAULT_BASE_URL,
         transformClient: http => requestKeys((options.client.transformClient?.(http) ?? http)).pipe(
           HttpClient.mapRequest(request => HttpClientRequest.setHeaders(request, { "chatgpt-account-id": credentials.accountId, originator: "codex_cli_rs" }))
@@ -88,4 +87,12 @@ export const createProviderLayer = (auth?: CodexCredentials["Service"], policy: 
   return OpenAiLanguageModel.layer({ ...options.model, config: { ...validatedConfig(OpenAiLanguageModel.ModelConfigSchema, options.model.config, options.unvalidatedConfig), store: false } }).pipe(Layer.provide(clientLayer))
 }
 
-export const providerLayer: ProviderLayer = createProviderLayer()
+// providerLayer supplies static-token credentials to the provider registry (codex.test.ts).
+export const providerLayer: ProviderLayer = options => {
+  if (options.provider !== "codex") throw new Error(`The Codex layer cannot serve ${options.provider}; supply the matching providerLayer`)
+  const credentials = Effect.try({
+    try: () => credentialsFromAccessToken(options.client.apiKey === undefined ? "" : Redacted.value(options.client.apiKey)),
+    catch: () => new CodexAuthError({ message: "Invalid Codex access token" })
+  })
+  return createProviderLayer()(options).pipe(Layer.provide(Layer.succeed(CodexCredentials, { credentials })))
+}

@@ -5,6 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createProviderLayer, DEFAULT_BASE_URL, listModels, MODEL_LIST_DEFAULTS } from "tardie/model/providers/codex"
+import { CodexCredentials } from "tardie/model/providers/codex-auth"
 import { modelLockOf } from "tardie/model/lock"
 import { bunModelServices } from "tardie/deprecated/server/model-services"
 import { savedCredentials } from "../../codex-provider/credentials"
@@ -21,11 +22,11 @@ export const codexModelServices = async (env: Readonly<Record<string, string | u
     Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(env))
   ))
   const baseUrl = env.CODEX_BASE_URL ?? DEFAULT_BASE_URL
-  const models = await Effect.runPromise(listModels(auth, {
+  const models = await Effect.runPromise(listModels({
     baseUrl,
     clientVersion: env.CODEX_CLIENT_VERSION ?? MODEL_LIST_DEFAULTS.clientVersion,
     requestMs: Number(env.CODEX_MODEL_LIST_MS ?? MODEL_LIST_DEFAULTS.requestMs)
-  }).pipe(Effect.provide(FetchHttpClient.layer)))
+  }).pipe(Effect.provideService(CodexCredentials, auth), Effect.provide(FetchHttpClient.layer)))
   const selected = models.find(entry => entry.slug === model && entry.visibility !== "hide")
   if (!selected) throw new Error(`Codex model ${model} is unavailable. Available models: ${models.filter(entry => entry.visibility !== "hide").map(entry => entry.slug).join(", ")}`)
   const contextWindowTokens = env.CODEX_CONTEXT_WINDOW_TOKENS === undefined ? selected.context_window : Number(env.CODEX_CONTEXT_WINDOW_TOKENS)
@@ -43,6 +44,6 @@ export const codexModelServices = async (env: Readonly<Record<string, string | u
   return bunModelServices({
     configFile,
     env: { ...env, CODEX_ACCESS_TOKEN: credentials.accessToken },
-    model: { providerLayer: createProviderLayer(auth) }
+    model: { providerLayer: options => createProviderLayer()(options).pipe(Layer.provide(Layer.succeed(CodexCredentials, auth))) }
   })
 }

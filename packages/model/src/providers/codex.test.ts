@@ -4,7 +4,7 @@ import { LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { createProviderLayer, listModels, providerLayer } from "./codex"
 import { providerLayer as loadProvider } from "./layer"
-import { credentialsFromAccessToken } from "./codex-auth"
+import { CodexCredentials, credentialsFromAccessToken } from "./codex-auth"
 import { providerEvents, reasoning } from "../testing/fixtures"
 import { ModelLock, modelLockOf, modelLockService } from "../lock"
 import { modelLayer } from "../host"
@@ -29,7 +29,10 @@ for (const mode of ["stream", "complete"] as const) {
       requests.push(JSON.parse(new TextDecoder().decode(request.body.body)))
       return HttpClientResponse.fromWeb(request, new Response(frames, { headers: { "content-type": "text/event-stream" } }))
     }))
-    const layer = createProviderLayer(auth)(options).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http)))
+    const layer = createProviderLayer()(options).pipe(
+      Layer.provide(Layer.succeed(CodexCredentials, auth)),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, http))
+    )
     const input = { prompt: Prompt.make([{ role: "system", content: "Keep answers short." }, { role: "user", content: "Read the files" }]), toolkit, disableToolCallResolution: true as const }
     const response = mode === "stream"
       ? await Effect.runPromise(LanguageModel.streamText(input).pipe(Stream.runCollect, Effect.provide(layer)))
@@ -62,7 +65,7 @@ test("Codex static access tokens use the optional provider loader", async () => 
 test("Codex exposes unsupported output limits and permits rejection", async () => {
   const http = HttpClient.make(() => Effect.die("No request is permitted"))
   const configured = { ...options, endpoint: options.client.apiUrl, maxOutputTokens: 10 }
-  const layer = inferenceLayer(configured, createProviderLayer(auth, { outputLimit: "reject" })).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http)))
+  const layer = inferenceLayer(configured, options => createProviderLayer({ outputLimit: "reject" })(options).pipe(Layer.provide(Layer.succeed(CodexCredentials, auth)))).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, http)))
   const settings = await Effect.runPromise(BindingSettings.pipe(Effect.provide(layer)))
   expect(settings.outputTokenLimitEnforcement).toBe("unsupported")
   expect(settings.policy.maxOutputTokens).toBe(10)
@@ -163,7 +166,8 @@ test("Codex model discovery uses account credentials and a configurable client v
       { slug: "available-model", visibility: "list" }, { slug: "hidden-model", visibility: "hide" }
     ] }))
   }))
-  const models = await Effect.runPromise(listModels(auth, { baseUrl: "https://fixture.invalid/codex", clientVersion: "0.162.0" }).pipe(
+  const models = await Effect.runPromise(listModels({ baseUrl: "https://fixture.invalid/codex", clientVersion: "0.162.0" }).pipe(
+    Effect.provideService(CodexCredentials, auth),
     Effect.provideService(HttpClient.HttpClient, http)
   ))
   expect(models.map(model => model.slug)).toEqual(["available-model", "hidden-model"])
@@ -171,6 +175,6 @@ test("Codex model discovery uses account credentials and a configurable client v
 
 test("Codex model discovery respects its timeout override", async () => {
   const http = HttpClient.make(() => Effect.never)
-  const result = await Effect.runPromise(listModels(auth, { requestMs: 1 }).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.result))
+  const result = await Effect.runPromise(listModels({ requestMs: 1 }).pipe(Effect.provideService(CodexCredentials, auth), Effect.provideService(HttpClient.HttpClient, http), Effect.result))
   expect(result._tag).toBe("Failure")
 })
