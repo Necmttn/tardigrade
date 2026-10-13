@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Fiber } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
-import { AUTH_DEFAULTS, CodexAuthError, credentialsFromTokens, deviceLogin, type Tokens } from "./codex-auth"
+import { AUTH_DEFAULTS, CodexAuthError, CodexCredentials, codexOAuthLayer, credentialsFromTokens, deviceLogin, type Tokens } from "./codex-auth"
 import { oauthFixture } from "../testing/fixtures/oauth"
 
 const authFixture = (options: { readonly loginStatus?: number; readonly stallLogin?: boolean; readonly holdRefresh?: boolean } = {}) => {
@@ -52,7 +52,7 @@ for (const cancel of [false, true]) {
       await Effect.runPromise(Effect.gen(function* () {
         const initial = yield* login(fixture)
         yield* persist(file)(initial)
-        const auth = yield* credentialsFromTokens(initial, { issuer: fixture.issuer }, persist(file))
+        const auth = yield* CodexCredentials.pipe(Effect.provide(codexOAuthLayer({ tokens: initial, issuer: fixture.issuer, persist: persist(file) })))
         const first = yield* auth.credentials.pipe(Effect.forkChild)
         yield* Effect.promise(() => fixture.rotated)
         if (cancel) yield* Effect.sync(() => first.interruptUnsafe())
@@ -64,7 +64,7 @@ for (const cancel of [false, true]) {
         const persisted: Tokens = JSON.parse(yield* Effect.promise(() => readFile(file, "utf8")))
         expect(persisted.refreshToken).toBe("refresh-1")
         expect(fixture.requests.filter(request => request.body.grant_type === "refresh_token").map(request => request.body.refresh_token)).toEqual(["refresh-0"])
-        const restarted = yield* credentialsFromTokens({ ...persisted, expiresAt: 0 }, { issuer: fixture.issuer }, persist(file))
+        const restarted = yield* CodexCredentials.pipe(Effect.provide(codexOAuthLayer({ tokens: { ...persisted, expiresAt: 0 }, issuer: fixture.issuer, persist: persist(file) })))
         expect((yield* restarted.credentials).accountId).toBe("fixture-account")
         const afterRestart: Tokens = JSON.parse(yield* Effect.promise(() => readFile(file, "utf8")))
         expect(afterRestart.refreshToken).toBe("refresh-2")

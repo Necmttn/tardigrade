@@ -1,4 +1,4 @@
-import { Clock, Context, Data, Effect, Encoding, Ref, Schema, Semaphore } from "effect"
+import { Clock, Context, Data, Effect, Encoding, Layer, Ref, Schema, Semaphore } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 
 export const AUTH_DEFAULTS = {
@@ -118,3 +118,12 @@ export const credentialsFromTokens = Effect.fn("Codex.credentialsFromTokens")(fu
     return { accessToken: current.accessToken, accountId: current.accountId }
   }).pipe(Effect.uninterruptible)) }
 })
+
+export interface CodexOAuthOptions extends AuthOptions {
+  readonly tokens: Tokens
+  readonly persist: (tokens: Tokens) => Effect.Effect<void, CodexAuthError>
+}
+
+// codexOAuthLayer supplies an account's renewable credentials and persistence callback (codex-auth.test.ts).
+export const codexOAuthLayer = ({ tokens, persist, ...options }: CodexOAuthOptions): Layer.Layer<CodexCredentials, never, HttpClient.HttpClient> =>
+  Layer.effect(CodexCredentials, credentialsFromTokens(tokens, options, persist))

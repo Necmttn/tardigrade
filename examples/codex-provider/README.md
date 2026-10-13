@@ -23,11 +23,9 @@ Provide a shared credentials layer with a callback that saves renewed tokens:
 ```ts
 import { Layer } from "effect"
 import { createProviderLayer } from "tardie/model/providers/codex"
-import { CodexCredentials, credentialsFromTokens } from "tardie/model/providers/codex-auth"
+import { codexOAuthLayer } from "tardie/model/providers/codex-auth"
 
-const credentials = Layer.effect(CodexCredentials,
-  credentialsFromTokens(tokens, {}, persistRotatedTokens)
-)
+const credentials = codexOAuthLayer({ tokens, persist: persistRotatedTokens })
 const layer = createProviderLayer()({
   provider: "codex",
   client: {},
@@ -35,6 +33,8 @@ const layer = createProviderLayer()({
 }).pipe(Layer.provide(credentials))
 ```
 
-The layer supports `LanguageModel.generateText`, `streamText`, and `generateObject`. Share the credentials layer across model bindings for the same account so concurrent requests coordinate token renewal. See [credentials.ts](credentials.ts) for file persistence and [main.ts](main.ts) for login and model discovery.
+`codexOAuthLayer` requires `HttpClient` and provides `CodexCredentials`. It accepts the overrides in `AUTH_DEFAULTS`; initial login remains explicit through `deviceLogin`.
+
+The model layer supports `LanguageModel.generateText`, `streamText`, and `generateObject`. Share the credentials layer across model bindings for the same account so concurrent requests coordinate token renewal. See [credentials.ts](credentials.ts) for file persistence and [main.ts](main.ts) for login and model discovery.
 
 Codex does not enforce output token limits. The provider warns and omits `max_output_tokens` by default. Use `createProviderLayer({ outputLimit: "reject" })` to reject requests that specify this limit.

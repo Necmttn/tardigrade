@@ -4,11 +4,11 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { LanguageModel } from "effect/unstable/ai"
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { createProviderLayer, listModels, MODEL_LIST_DEFAULTS } from "tardie/model/providers/codex"
-import { CodexCredentials, deviceLogin } from "tardie/model/providers/codex-auth"
+import { deviceLogin } from "tardie/model/providers/codex-auth"
 
-import { credentialFile, save, savedCredentials } from "./credentials"
+import { credentialFile, save, savedCredentialsLayer } from "./credentials"
 
-const credentialsLayer = Layer.effect(CodexCredentials, savedCredentials())
+const credentialsLayer = savedCredentialsLayer()
 
 const login = Command.make("login", {}, () => Effect.gen(function* () {
   const tokens = yield* deviceLogin(({ url, code }) => Console.log(`Open ${url} and enter ${code}`))

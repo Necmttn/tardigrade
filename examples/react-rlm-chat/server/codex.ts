@@ -8,7 +8,7 @@ import { createProviderLayer, DEFAULT_BASE_URL, listModels, MODEL_LIST_DEFAULTS 
 import { CodexCredentials } from "tardie/model/providers/codex-auth"
 import { modelLockOf } from "tardie/model/lock"
 import { bunModelServices } from "tardie/deprecated/server/model-services"
-import { savedCredentials } from "../../codex-provider/credentials"
+import { savedCredentialsLayer } from "../../codex-provider/credentials"
 
 export const DEFAULT_CODEX_STATE_DIRECTORY = fileURLToPath(new URL(".tardigrade/codex", import.meta.url))
 export const DEFAULT_CODEX_CREDENTIALS_FILE = fileURLToPath(new URL("../../codex-provider/.codex-credentials.json", import.meta.url))
@@ -17,8 +17,10 @@ export const DEFAULT_CODEX_CREDENTIALS_FILE = fileURLToPath(new URL("../../codex
 export const codexModelServices = async (env: Readonly<Record<string, string | undefined>>) => {
   const model = env.CODEX_MODEL?.trim()
   if (!model) throw new Error("Set CODEX_MODEL to an ID from the Codex example's models command")
-  const auth = await Effect.runPromise(savedCredentials(DEFAULT_CODEX_CREDENTIALS_FILE).pipe(
-    Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer)),
+  const auth = await Effect.runPromise(CodexCredentials.pipe(
+    Effect.provide(savedCredentialsLayer(DEFAULT_CODEX_CREDENTIALS_FILE).pipe(
+      Layer.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))
+    )),
     Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown(env))
   ))
   const baseUrl = env.CODEX_BASE_URL ?? DEFAULT_BASE_URL
